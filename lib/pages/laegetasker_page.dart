@@ -16,6 +16,10 @@ class LaegetaskerPage extends StatefulWidget {
 }
 
 class _LaegetaskerPageState extends State<LaegetaskerPage> {
+  static const Set<String> _adminOverrideEmails = {
+    'materialer@horsensfreja.dk',
+  };
+
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   List<TeamModel> _teams = [];
@@ -46,6 +50,7 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
 
       TeamModel? initialTeam;
       final user = FirebaseAuth.instance.currentUser;
+      var isAdmin = false;
 
       if (user != null) {
         final userDoc = await _firestore
@@ -53,6 +58,12 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
             .doc(user.uid)
             .get();
         final userData = userDoc.data();
+        final role = (userData?['role'] as String? ?? '').toLowerCase();
+        final email = user.email?.toLowerCase();
+        isAdmin =
+            (userData?['isAdmin'] as bool? ?? false) ||
+            role == 'admin' ||
+            (email != null && _adminOverrideEmails.contains(email));
 
         final cadence = userData?['reportingCadence'] as String?;
         if (cadence != null && cadence.isNotEmpty) {
@@ -91,7 +102,7 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
           }
         }
 
-        _teamLocked = initialTeam != null;
+        _teamLocked = !isAdmin && initialTeam != null;
       }
 
       initialTeam ??= _assignedTeam;
