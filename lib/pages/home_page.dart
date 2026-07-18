@@ -255,10 +255,15 @@ class _HomePageState extends State<HomePage> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(
-                          Icons.sports_soccer,
-                          size: 44,
-                          color: Theme.of(context).colorScheme.primary,
+                        Image.network(
+                          'icons/logo.png',
+                          height: 62,
+                          fit: BoxFit.contain,
+                          errorBuilder: (context, error, stackTrace) => Icon(
+                            Icons.sports_soccer,
+                            size: 44,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
                         ),
                         const SizedBox(height: 8),
                         Text(
