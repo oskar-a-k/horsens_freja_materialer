@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import '../models/material_model.dart';
 import '../models/team_model.dart';
 import '../services/inventory_service.dart';
+import '../services/laegetasker_access_logic.dart';
+import '../services/shortage_case_service.dart';
 
 class LaegetaskerPage extends StatefulWidget {
   final InventoryService service;
@@ -21,6 +23,9 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
   };
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  late final ShortageCaseService _shortageCaseService = ShortageCaseService(
+    firestore: _firestore,
+  );
 
   List<TeamModel> _teams = [];
   List<MaterialModel> _materials = [];
@@ -102,7 +107,10 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
           }
         }
 
-        _teamLocked = !isAdmin && initialTeam != null;
+        _teamLocked = LaegetaskerAccessLogic.shouldLockTeams(
+          isAdmin: isAdmin,
+          assignedTeam: initialTeam,
+        );
       }
 
       initialTeam ??= _assignedTeam;
@@ -203,22 +211,23 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
                 }
 
                 final user = FirebaseAuth.instance.currentUser;
-                await _firestore.collection('bag_shortages').add({
-                  'teamId': team.id,
-                  'teamName': team.name,
-                  'materialId': material.id,
-                  'materialName': _materialLabel(material),
-                  'quantity': qty,
-                  'note': reason,
-                  'reportedByUid': user?.uid,
-                  'reportedByEmail': user?.email,
-                  'createdAt': FieldValue.serverTimestamp(),
-                  'status': 'open',
-                });
+                await _shortageCaseService.upsertOpenCase(
+                  teamId: team.id,
+                  teamName: team.name,
+                  materialId: material.id,
+                  materialName: _materialLabel(material),
+                  reportedQuantity: qty,
+                  note: reason,
+                  source: 'coach_report',
+                  reportedByUid: user?.uid,
+                  reportedByEmail: user?.email,
+                );
 
                 if (!mounted) return;
                 messenger.showSnackBar(
-                  const SnackBar(content: Text('Mangel er registreret.')),
+                  const SnackBar(
+                    content: Text('Sag er registreret/opdateret.'),
+                  ),
                 );
                 dialogNavigator.pop();
               },
@@ -312,12 +321,11 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
     final cadenceLabel = _reportingCadence == 'monthly'
         ? 'Månedligt'
         : 'Hver 2. uge';
-    final visibleTeams = _teamLocked && _assignedTeam != null
-        ? [
-            for (final t in _teams)
-              if (t.id == _assignedTeam!.id) t,
-          ]
-        : _teams;
+    final visibleTeams = LaegetaskerAccessLogic.visibleTeams(
+      teams: _teams,
+      teamLocked: _teamLocked,
+      assignedTeam: _assignedTeam,
+    );
 
     return Scaffold(
       appBar: AppBar(title: const Text('Lægetasker')),
@@ -368,24 +376,23 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
                                 builder: (context, shortageSnapshot) {
                                   final shortageDocs =
                                       shortageSnapshot.data?.docs ?? [];
-                                  final shortageByMaterial = <String, int>{};
+                                  final activeCaseByMaterial = <String, bool>{};
                                   for (final doc in shortageDocs) {
                                     final data = doc.data();
                                     final materialId =
                                         data['materialId'] as String?;
-                                    final quantity =
-                                        (data['quantity'] as num?)?.toInt() ??
-                                        0;
                                     if (materialId == null) continue;
-                                    shortageByMaterial[materialId] =
-                                        (shortageByMaterial[materialId] ?? 0) +
-                                        quantity;
+                                    activeCaseByMaterial[materialId] = true;
                                   }
 
-                                  final entries = team.holdings.entries
-                                      .toList();
-                                  final medEntries = entries.where((entry) {
-                                    final material = _materialForId(entry.key);
+                                  final medKeys = <String>{
+                                    ...team.holdings.keys,
+                                    ...team.expectedHoldings.keys,
+                                  };
+                                  final medEntries = medKeys.where((
+                                    materialId,
+                                  ) {
+                                    final material = _materialForId(materialId);
                                     final category = material.category
                                         .toLowerCase();
                                     return category.contains('læge') ||
@@ -394,10 +401,10 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
 
                                   medEntries.sort((a, b) {
                                     final aName = _materialLabel(
-                                      _materialForId(a.key),
+                                      _materialForId(a),
                                     );
                                     final bName = _materialLabel(
-                                      _materialForId(b.key),
+                                      _materialForId(b),
                                     );
                                     return aName.toLowerCase().compareTo(
                                       bName.toLowerCase(),
@@ -440,25 +447,26 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
                                         ),
                                       ),
                                       const SizedBox(height: 8),
-                                      for (final entry in medEntries)
+                                      for (final materialId in medEntries)
                                         Builder(
                                           builder: (context) {
                                             final material = _materialForId(
-                                              entry.key,
+                                              materialId,
                                             );
                                             final label = _materialLabel(
                                               material,
                                             );
-                                            final actual = entry.value;
+                                            final actual =
+                                                team.holdings[materialId] ?? 0;
                                             final expected = team
-                                                .expectedHoldings[entry.key];
+                                                .expectedHoldings[materialId];
                                             final expectedMissing =
                                                 expected == null
                                                 ? null
                                                 : expected - actual;
-                                            final reportedMissing =
-                                                shortageByMaterial[entry.key] ??
-                                                0;
+                                            final hasActiveCase =
+                                                activeCaseByMaterial[materialId] ==
+                                                true;
 
                                             return Card(
                                               margin:
@@ -480,7 +488,9 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
                                                         'Forventet: $expected · Mangler ift. forventet: $expectedMissing',
                                                       ),
                                                     Text(
-                                                      'Meldte mangler (åbne): $reportedMissing',
+                                                      hasActiveCase
+                                                          ? 'Aktiv sag: Ja'
+                                                          : 'Aktiv sag: Nej',
                                                     ),
                                                   ],
                                                 ),
@@ -492,7 +502,7 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
                                                         currentQty: actual,
                                                       ),
                                                   child: const Text(
-                                                    'Meld mangel',
+                                                    'Opret/opdater sag',
                                                   ),
                                                 ),
                                               ),

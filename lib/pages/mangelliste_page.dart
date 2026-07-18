@@ -2,6 +2,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../services/shortage_case_logic.dart';
+import '../services/shortage_case_service.dart';
+
 class MangellistePage extends StatefulWidget {
   const MangellistePage({super.key});
 
@@ -11,6 +14,9 @@ class MangellistePage extends StatefulWidget {
 
 class _MangellistePageState extends State<MangellistePage> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  late final ShortageCaseService _shortageCaseService = ShortageCaseService(
+    firestore: _firestore,
+  );
 
   String _friendlyErrorMessage(Object error) {
     if (error is FirebaseException) {
@@ -36,19 +42,22 @@ class _MangellistePageState extends State<MangellistePage> {
     return '${d.year}-$mm-$dd';
   }
 
-  Future<void> _closeAsSelfRefilled(String docId) async {
+  Future<void> _closeAsSelfRefilled(Iterable<String> docIds) async {
     final user = FirebaseAuth.instance.currentUser;
-    await _firestore.collection('bag_shortages').doc(docId).update({
-      'status': 'closed',
-      'resolutionType': 'self_refilled',
-      'resolvedAt': FieldValue.serverTimestamp(),
-      'resolvedByUid': user?.uid,
-      'resolvedByEmail': user?.email,
-    });
+    await _shortageCaseService.closeCases(
+      docIds: docIds,
+      resolutionFields: {
+        'status': 'closed',
+        'resolutionType': 'self_refilled',
+        'resolvedAt': FieldValue.serverTimestamp(),
+        'resolvedByUid': user?.uid,
+        'resolvedByEmail': user?.email,
+      },
+    );
   }
 
   Future<void> _closeAsDelivered({
-    required String docId,
+    required Iterable<String> docIds,
     required DateTime deliveredDate,
   }) async {
     final user = FirebaseAuth.instance.currentUser;
@@ -58,17 +67,20 @@ class _MangellistePageState extends State<MangellistePage> {
       deliveredDate.day,
     );
 
-    await _firestore.collection('bag_shortages').doc(docId).update({
-      'status': 'closed',
-      'resolutionType': 'delivered',
-      'deliveredAt': Timestamp.fromDate(dateOnly),
-      'resolvedAt': FieldValue.serverTimestamp(),
-      'resolvedByUid': user?.uid,
-      'resolvedByEmail': user?.email,
-    });
+    await _shortageCaseService.closeCases(
+      docIds: docIds,
+      resolutionFields: {
+        'status': 'closed',
+        'resolutionType': 'delivered',
+        'deliveredAt': Timestamp.fromDate(dateOnly),
+        'resolvedAt': FieldValue.serverTimestamp(),
+        'resolvedByUid': user?.uid,
+        'resolvedByEmail': user?.email,
+      },
+    );
   }
 
-  Future<void> _showDeliveredDialog(String docId) async {
+  Future<void> _showDeliveredDialog(Iterable<String> docIds) async {
     final now = DateTime.now();
     final selected = await showDatePicker(
       context: context,
@@ -79,10 +91,24 @@ class _MangellistePageState extends State<MangellistePage> {
     );
     if (selected == null) return;
 
-    await _closeAsDelivered(docId: docId, deliveredDate: selected);
+    await _closeAsDelivered(docIds: docIds, deliveredDate: selected);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Mangel lukket: Vare udleveret.')),
+    );
+  }
+
+  Future<void> _closeAsResolvedByStatus(Iterable<String> docIds) async {
+    final user = FirebaseAuth.instance.currentUser;
+    await _shortageCaseService.closeCases(
+      docIds: docIds,
+      resolutionFields: {
+        'status': 'closed',
+        'resolutionType': 'resolved_by_status',
+        'resolvedAt': FieldValue.serverTimestamp(),
+        'resolvedByUid': user?.uid,
+        'resolvedByEmail': user?.email,
+      },
     );
   }
 
@@ -151,22 +177,21 @@ class _MangellistePageState extends State<MangellistePage> {
                 }
 
                 final user = FirebaseAuth.instance.currentUser;
-                await _firestore.collection('bag_shortages').add({
-                  'teamId': teamId,
-                  'teamName': teamName,
-                  'materialId': materialId,
-                  'materialName': materialName,
-                  'quantity': qty,
-                  'note': note,
-                  'reportedByUid': user?.uid,
-                  'reportedByEmail': user?.email,
-                  'createdAt': FieldValue.serverTimestamp(),
-                  'status': 'open',
-                });
+                await _shortageCaseService.upsertOpenCase(
+                  teamId: teamId,
+                  teamName: teamName,
+                  materialId: materialId,
+                  materialName: materialName,
+                  reportedQuantity: qty,
+                  note: note,
+                  source: 'auto_gap',
+                  reportedByUid: user?.uid,
+                  reportedByEmail: user?.email,
+                );
 
                 if (!mounted) return;
                 messenger.showSnackBar(
-                  const SnackBar(content: Text('Mangel er indmeldt.')),
+                  const SnackBar(content: Text('Sag er oprettet/opdateret.')),
                 );
                 dialogNavigator.pop();
               },
@@ -222,16 +247,15 @@ class _MangellistePageState extends State<MangellistePage> {
         c.contains('consum');
   }
 
-  Widget _buildReportedShortageCard(
-    QueryDocumentSnapshot<Map<String, dynamic>> doc,
-  ) {
-    final data = doc.data();
-    final teamName = data['teamName'] as String? ?? 'Ukendt hold';
-    final materialName = data['materialName'] as String? ?? 'Ukendt vare';
-    final qty = (data['quantity'] as num?)?.toInt() ?? 0;
-    final note = (data['note'] as String? ?? '').trim();
-    final reporter = data['reportedByEmail'] as String? ?? 'ukendt';
-    final createdAt = data['createdAt'] as Timestamp?;
+  Widget _buildReportedShortageCard(_OpenShortageCase openCase) {
+    final resolvedByStatusCandidate =
+        ShortageCaseLogic.isResolvedByStatusCandidate(openCase.currentMissing);
+    final sourceLabel = switch (openCase.source) {
+      'coach_report' => 'Kilde: Trænerindmelding',
+      'auto_gap' => 'Kilde: Oprettet fra beregnet mangel',
+      'admin_created' => 'Kilde: Oprettet af admin',
+      _ => 'Kilde: Ukendt',
+    };
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -241,27 +265,51 @@ class _MangellistePageState extends State<MangellistePage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              materialName,
+              openCase.materialName,
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 6),
-            Text('Hold: $teamName'),
-            Text('Antal: $qty'),
-            Text('Indmeldt af: $reporter'),
-            Text('Indmeldt: ${_dateLabel(createdAt)}'),
-            if (note.isNotEmpty) ...[
+            Text('Hold: ${openCase.teamName}'),
+            Text('Sagsantal: ${openCase.reportedQuantity}'),
+            Text('Aktuel beregnet mangel: ${openCase.currentMissing}'),
+            if (resolvedByStatusCandidate)
+              Text(
+                'Status ser nu korrekt ud. Sagen kan lukkes som løst af statusændring.',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.primary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            Text(sourceLabel),
+            Text('Indmeldt af: ${openCase.reportedByEmail}'),
+            Text('Indmeldt: ${_dateLabel(openCase.createdAt)}'),
+            if (openCase.note.isNotEmpty) ...[
               const SizedBox(height: 4),
-              Text('Note: $note'),
+              Text('Note: ${openCase.note}'),
             ],
             const SizedBox(height: 10),
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: [
+                if (resolvedByStatusCandidate)
+                  FilledButton.tonal(
+                    onPressed: () async {
+                      final messenger = ScaffoldMessenger.of(context);
+                      await _closeAsResolvedByStatus(openCase.docIds);
+                      if (!mounted) return;
+                      messenger.showSnackBar(
+                        const SnackBar(
+                          content: Text('Sag lukket: Løst af statusændring.'),
+                        ),
+                      );
+                    },
+                    child: const Text('Luk som status rettet'),
+                  ),
                 OutlinedButton(
                   onPressed: () async {
                     final messenger = ScaffoldMessenger.of(context);
-                    await _closeAsSelfRefilled(doc.id);
+                    await _closeAsSelfRefilled(openCase.docIds);
                     if (!mounted) return;
                     messenger.showSnackBar(
                       const SnackBar(
@@ -272,7 +320,7 @@ class _MangellistePageState extends State<MangellistePage> {
                   child: const Text('Fyldt på taske selv'),
                 ),
                 ElevatedButton(
-                  onPressed: () => _showDeliveredDialog(doc.id),
+                  onPressed: () => _showDeliveredDialog(openCase.docIds),
                   child: const Text('Vare udleveret'),
                 ),
               ],
@@ -281,6 +329,191 @@ class _MangellistePageState extends State<MangellistePage> {
         ),
       ),
     );
+  }
+
+  Widget _buildCalculatedGapCard(Map<String, dynamic> gap) {
+    final hasActiveCase = gap['hasActiveCase'] as bool;
+    final activeCaseQuantity = gap['activeCaseQuantity'] as int;
+
+    return Card(
+      color: Colors.orange.shade50,
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              gap['materialName'] as String,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 6),
+            Text('Hold: ${gap['teamName']}'),
+            Text('Forventet beholdning: ${gap['expected']}'),
+            Text('Aktuel status: ${gap['actual']}'),
+            Text(
+              'Beregnet mangel: ${gap['missing']}',
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              hasActiveCase
+                  ? 'Aktiv sag: Ja ($activeCaseQuantity registreret)'
+                  : 'Aktiv sag: Nej',
+            ),
+            const SizedBox(height: 8),
+            ElevatedButton.icon(
+              onPressed: !hasActiveCase
+                  ? () => _createShortageFromAutoGap(
+                      teamId: gap['teamId'] as String,
+                      teamName: gap['teamName'] as String,
+                      materialId: gap['materialId'] as String,
+                      materialName: gap['materialName'] as String,
+                      suggestedQty: gap['missing'] as int,
+                    )
+                  : null,
+              icon: const Icon(Icons.add_task),
+              label: Text(!hasActiveCase ? 'Opret sag' : 'Sag findes allerede'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOpenSection({
+    required String title,
+    required String description,
+    required List<Map<String, dynamic>> calculatedGaps,
+    required List<_OpenShortageCase> activeCases,
+  }) {
+    final unresolvedCases = activeCases
+        .where(
+          (openCase) => !ShortageCaseLogic.isResolvedByStatusCandidate(
+            openCase.currentMissing,
+          ),
+        )
+        .toList();
+    final resolvedByStatusCases = activeCases
+        .where(
+          (openCase) => ShortageCaseLogic.isResolvedByStatusCandidate(
+            openCase.currentMissing,
+          ),
+        )
+        .toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+          child: Text(
+            title,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: Text(
+            description,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ),
+        if (calculatedGaps.isEmpty && activeCases.isEmpty)
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Text('Ingen åbne poster i denne gruppe.'),
+          ),
+        if (calculatedGaps.isNotEmpty) ...[
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+            child: Text(
+              'Beregnet mangel',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+          ...calculatedGaps.map(_buildCalculatedGapCard),
+        ],
+        if (unresolvedCases.isNotEmpty) ...[
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+            child: Text(
+              'Aktive sager',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+          ...unresolvedCases.map(_buildReportedShortageCard),
+        ],
+        if (resolvedByStatusCases.isNotEmpty) ...[
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+            child: Text(
+              'Sager uden aktuel mangel',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 0, 16, 4),
+            child: Text(
+              'Disse sager har ikke længere en beregnet mangel og kan normalt lukkes som løst af statusændring.',
+            ),
+          ),
+          ...resolvedByStatusCases.map(_buildReportedShortageCard),
+        ],
+      ],
+    );
+  }
+
+  Map<String, _OpenShortageCase> _buildOpenCaseMap(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+  ) {
+    final records = <ShortageCaseRecord>[];
+    for (final doc in docs) {
+      final data = doc.data();
+      final teamId = data['teamId'] as String?;
+      final materialId = data['materialId'] as String?;
+      if (teamId == null || materialId == null) continue;
+      final createdAt = data['createdAt'] as Timestamp?;
+      records.add(
+        ShortageCaseRecord(
+          docId: doc.id,
+          teamId: teamId,
+          teamName: data['teamName'] as String? ?? 'Ukendt hold',
+          materialId: materialId,
+          materialName: data['materialName'] as String? ?? 'Ukendt vare',
+          reportedQuantity:
+              (data['reportedQuantity'] as num?)?.toInt() ??
+              (data['quantity'] as num?)?.toInt() ??
+              0,
+          note: (data['note'] as String? ?? '').trim(),
+          source: data['source'] as String? ?? 'unknown',
+          reportedByEmail: data['reportedByEmail'] as String? ?? 'ukendt',
+          createdAtMillis: createdAt?.millisecondsSinceEpoch ?? 0,
+        ),
+      );
+    }
+
+    final result = <String, _OpenShortageCase>{};
+    final grouped = ShortageCaseLogic.groupOpenCases(records);
+    for (final entry in grouped.entries) {
+      final groupedCase = entry.value;
+      result[entry.key] = _OpenShortageCase(
+        key: entry.key,
+        docIds: groupedCase.docIds,
+        teamId: groupedCase.teamId,
+        teamName: groupedCase.teamName,
+        materialId: groupedCase.materialId,
+        materialName: groupedCase.materialName,
+        reportedQuantity: groupedCase.reportedQuantity,
+        note: groupedCase.note,
+        source: groupedCase.source,
+        reportedByEmail: groupedCase.reportedByEmail,
+        createdAt: groupedCase.createdAtMillis == 0
+            ? null
+            : Timestamp.fromMillisecondsSinceEpoch(groupedCase.createdAtMillis),
+      );
+    }
+    return result;
   }
 
   Widget _buildOpenShortagesTab() {
@@ -334,17 +567,7 @@ class _MangellistePageState extends State<MangellistePage> {
                   materialById[doc.id] = doc.data();
                 }
 
-                final reportedByTeamMaterial = <String, int>{};
-                for (final doc in shortageDocs) {
-                  final data = doc.data();
-                  final teamId = data['teamId'] as String?;
-                  final materialId = data['materialId'] as String?;
-                  final qty = (data['quantity'] as num?)?.toInt() ?? 0;
-                  if (teamId == null || materialId == null) continue;
-                  final key = '$teamId::$materialId';
-                  reportedByTeamMaterial[key] =
-                      (reportedByTeamMaterial[key] ?? 0) + qty;
-                }
+                final openCasesByKey = _buildOpenCaseMap(shortageDocs);
 
                 final expectedGaps = <Map<String, dynamic>>[];
                 for (final teamDoc in teams) {
@@ -362,13 +585,20 @@ class _MangellistePageState extends State<MangellistePage> {
                     final expected = (entry.value as num?)?.toInt() ?? 0;
                     final actual =
                         (holdingsRaw[materialId] as num?)?.toInt() ?? 0;
-                    final missing = expected - actual;
+                    final missing = ShortageCaseLogic.calculatedMissing(
+                      expected: expected,
+                      actual: actual,
+                    );
                     if (missing <= 0) continue;
 
-                    final reportedKey = '$teamId::$materialId';
-                    final reportedMissing =
-                        reportedByTeamMaterial[reportedKey] ?? 0;
-                    final remainingToReport = missing - reportedMissing;
+                    final caseKey = ShortageCaseService.keyFor(
+                      teamId,
+                      materialId,
+                    );
+                    final activeCase = openCasesByKey[caseKey];
+                    if (activeCase != null) {
+                      activeCase.currentMissing = missing;
+                    }
 
                     final material = materialById[materialId];
                     final materialLabel = material == null
@@ -383,8 +613,10 @@ class _MangellistePageState extends State<MangellistePage> {
                       'expected': expected,
                       'actual': actual,
                       'missing': missing,
-                      'reportedMissing': reportedMissing,
-                      'remainingToReport': remainingToReport,
+                      'hasActiveCase': activeCase != null,
+                      'activeCaseQuantity': activeCase?.reportedQuantity ?? 0,
+                      'activeCaseDocIds':
+                          activeCase?.docIds ?? const <String>[],
                       'isConsumable': _isConsumableCategory(
                         material?['category'] as String?,
                       ),
@@ -413,208 +645,37 @@ class _MangellistePageState extends State<MangellistePage> {
                     .where((g) => g['isConsumable'] != true)
                     .toList();
 
-                final consumableReported =
-                    <QueryDocumentSnapshot<Map<String, dynamic>>>[];
-                final otherReported =
-                    <QueryDocumentSnapshot<Map<String, dynamic>>>[];
-                for (final doc in shortageDocs) {
-                  final data = doc.data();
-                  final materialId = data['materialId'] as String?;
-                  final material = materialId == null
-                      ? null
-                      : materialById[materialId];
+                final consumableReported = <_OpenShortageCase>[];
+                final otherReported = <_OpenShortageCase>[];
+                for (final openCase in openCasesByKey.values) {
+                  final materialId = openCase.materialId;
+                  final material = materialById[materialId];
                   final isConsumable = _isConsumableCategory(
                     material?['category'] as String?,
                   );
                   if (isConsumable) {
-                    consumableReported.add(doc);
+                    consumableReported.add(openCase);
                   } else {
-                    otherReported.add(doc);
+                    otherReported.add(openCase);
                   }
                 }
 
                 return ListView(
                   children: [
-                    const Padding(
-                      padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
-                      child: Text(
-                        'Forbrugsvarer (lægetaske) - prioriteret',
-                        style: TextStyle(fontWeight: FontWeight.w700),
-                      ),
+                    _buildOpenSection(
+                      title: 'Forbrugsvarer (lægetaske) - prioriteret',
+                      description:
+                          'Her vises den beregnede afvigelse mellem forventet beholdning og faktisk status samt eventuelle aktive sager.',
+                      calculatedGaps: consumableAuto,
+                      activeCases: consumableReported,
                     ),
-                    if (consumableAuto.isEmpty && consumableReported.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
-                        child: Text('Ingen åbne forbrugsvare-mangler.'),
-                      ),
-                    if (consumableAuto.isNotEmpty) ...[
-                      const Padding(
-                        padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
-                        child: Text(
-                          'Automatiske mangler (forventet > status)',
-                          style: TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                      ...consumableAuto.map((gap) {
-                        return Card(
-                          color: Colors.orange.shade50,
-                          margin: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 6,
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.all(12),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  gap['materialName'] as String,
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                Text('Hold: ${gap['teamName']}'),
-                                Text('Forventet: ${gap['expected']}'),
-                                Text('Status: ${gap['actual']}'),
-                                Text(
-                                  'Mangler: ${gap['missing']}',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                Text(
-                                  'Indmeldt allerede: ${gap['reportedMissing']}',
-                                ),
-                                const SizedBox(height: 8),
-                                ElevatedButton.icon(
-                                  onPressed:
-                                      (gap['remainingToReport'] as int) > 0
-                                      ? () => _createShortageFromAutoGap(
-                                          teamId: gap['teamId'] as String,
-                                          teamName: gap['teamName'] as String,
-                                          materialId:
-                                              gap['materialId'] as String,
-                                          materialName:
-                                              gap['materialName'] as String,
-                                          suggestedQty:
-                                              gap['remainingToReport'] as int,
-                                        )
-                                      : null,
-                                  icon: const Icon(Icons.add_task),
-                                  label: Text(
-                                    (gap['remainingToReport'] as int) > 0
-                                        ? 'Indmeld mangel (${gap['remainingToReport']})'
-                                        : 'Allerede fuldt indmeldt',
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      }),
-                    ],
-                    if (consumableReported.isNotEmpty) ...[
-                      const Padding(
-                        padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
-                        child: Text(
-                          'Indmeldte mangler',
-                          style: TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                      ...consumableReported.map(_buildReportedShortageCard),
-                    ],
-                    const Padding(
-                      padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
-                      child: Text(
-                        'Ovrige mangler (kan vare over flere uger)',
-                        style: TextStyle(fontWeight: FontWeight.w700),
-                      ),
+                    _buildOpenSection(
+                      title: 'Ovrige mangler (kan vare over flere uger)',
+                      description:
+                          'Her vises længerevarende mangler som fx bolde og andet udstyr, adskilt fra de hurtige forbrugssager.',
+                      calculatedGaps: otherAuto,
+                      activeCases: otherReported,
                     ),
-                    if (otherAuto.isEmpty && otherReported.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
-                        child: Text('Ingen ovrige åbne mangler.'),
-                      ),
-                    if (otherAuto.isNotEmpty) ...[
-                      const Padding(
-                        padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
-                        child: Text(
-                          'Automatiske mangler (forventet > status)',
-                          style: TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                      ...otherAuto.map((gap) {
-                        return Card(
-                          color: Colors.orange.shade50,
-                          margin: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 6,
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.all(12),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  gap['materialName'] as String,
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                Text('Hold: ${gap['teamName']}'),
-                                Text('Forventet: ${gap['expected']}'),
-                                Text('Status: ${gap['actual']}'),
-                                Text(
-                                  'Mangler: ${gap['missing']}',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                Text(
-                                  'Indmeldt allerede: ${gap['reportedMissing']}',
-                                ),
-                                const SizedBox(height: 8),
-                                ElevatedButton.icon(
-                                  onPressed:
-                                      (gap['remainingToReport'] as int) > 0
-                                      ? () => _createShortageFromAutoGap(
-                                          teamId: gap['teamId'] as String,
-                                          teamName: gap['teamName'] as String,
-                                          materialId:
-                                              gap['materialId'] as String,
-                                          materialName:
-                                              gap['materialName'] as String,
-                                          suggestedQty:
-                                              gap['remainingToReport'] as int,
-                                        )
-                                      : null,
-                                  icon: const Icon(Icons.add_task),
-                                  label: Text(
-                                    (gap['remainingToReport'] as int) > 0
-                                        ? 'Indmeld mangel (${gap['remainingToReport']})'
-                                        : 'Allerede fuldt indmeldt',
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      }),
-                    ],
-                    if (otherReported.isNotEmpty) ...[
-                      const Padding(
-                        padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
-                        child: Text(
-                          'Indmeldte mangler',
-                          style: TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                      ...otherReported.map(_buildReportedShortageCard),
-                    ],
                   ],
                 );
               },
@@ -719,6 +780,8 @@ class _MangellistePageState extends State<MangellistePage> {
                       Text(
                         resolutionType == 'delivered'
                             ? 'Lukket som: Vare udleveret'
+                            : resolutionType == 'resolved_by_status'
+                            ? 'Lukket som: Løst af statusændring'
                             : 'Lukket som: Fyldt på taske selv',
                       ),
                       if (deliveredAt != null)
@@ -734,7 +797,7 @@ class _MangellistePageState extends State<MangellistePage> {
                           OutlinedButton(
                             onPressed: () async {
                               final messenger = ScaffoldMessenger.of(context);
-                              await _closeAsSelfRefilled(doc.id);
+                              await _closeAsSelfRefilled([doc.id]);
                               if (!mounted) return;
                               messenger.showSnackBar(
                                 const SnackBar(
@@ -747,7 +810,7 @@ class _MangellistePageState extends State<MangellistePage> {
                             child: const Text('Fyldt på taske selv'),
                           ),
                           ElevatedButton(
-                            onPressed: () => _showDeliveredDialog(doc.id),
+                            onPressed: () => _showDeliveredDialog([doc.id]),
                             child: const Text('Vare udleveret'),
                           ),
                         ],
@@ -786,4 +849,33 @@ class _MangellistePageState extends State<MangellistePage> {
       ),
     );
   }
+}
+
+class _OpenShortageCase {
+  final String key;
+  final List<String> docIds;
+  final String teamId;
+  final String teamName;
+  final String materialId;
+  final String materialName;
+  final int reportedQuantity;
+  final String note;
+  final String source;
+  final String reportedByEmail;
+  final Timestamp? createdAt;
+  int currentMissing = 0;
+
+  _OpenShortageCase({
+    required this.key,
+    required this.docIds,
+    required this.teamId,
+    required this.teamName,
+    required this.materialId,
+    required this.materialName,
+    required this.reportedQuantity,
+    required this.note,
+    required this.source,
+    required this.reportedByEmail,
+    required this.createdAt,
+  });
 }
