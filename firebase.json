@@ -1,1 +1,28 @@
-{"flutter":{"platforms":{"dart":{"lib/firebase_options.dart":{"projectId":"horsens-freja-materialer","configurations":{"web":"1:653606651189:web:5dcef33ed641070d5f787c"}}}}}}
+{
+	"flutter": {
+		"platforms": {
+			"dart": {
+				"lib/firebase_options.dart": {
+					"projectId": "horsens-freja-materialer",
+					"configurations": {
+						"web": "1:653606651189:web:5dcef33ed641070d5f787c"
+					}
+				}
+			}
+		}
+	},
+	"hosting": {
+		"public": "build/web",
+		"ignore": [
+			"firebase.json",
+			"**/.*",
+			"**/node_modules/**"
+		],
+		"rewrites": [
+			{
+				"source": "**",
+				"destination": "/index.html"
+			}
+		]
+	}
+}
