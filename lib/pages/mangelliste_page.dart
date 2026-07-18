@@ -551,14 +551,19 @@ class _MangellistePageState extends State<MangellistePage> {
                   return _buildErrorCard(materialsSnapshot.error!);
                 }
 
-                final shortageDocs = [...(shortageSnapshot.data?.docs ?? [])]
-                  ..sort((a, b) {
-                    final aTs = a.data()['createdAt'] as Timestamp?;
-                    final bTs = b.data()['createdAt'] as Timestamp?;
-                    final aMillis = aTs?.millisecondsSinceEpoch ?? 0;
-                    final bMillis = bTs?.millisecondsSinceEpoch ?? 0;
-                    return bMillis.compareTo(aMillis);
-                  });
+                final shortageDocs =
+                    <QueryDocumentSnapshot<Map<String, dynamic>>>[
+                      ...(shortageSnapshot.data?.docs ??
+                          const <
+                            QueryDocumentSnapshot<Map<String, dynamic>>
+                          >[]),
+                    ]..sort((a, b) {
+                      final aTs = a.data()['createdAt'] as Timestamp?;
+                      final bTs = b.data()['createdAt'] as Timestamp?;
+                      final aMillis = aTs?.millisecondsSinceEpoch ?? 0;
+                      final bMillis = bTs?.millisecondsSinceEpoch ?? 0;
+                      return bMillis.compareTo(aMillis);
+                    });
 
                 final teams = teamsSnapshot.data?.docs ?? [];
                 final materials = materialsSnapshot.data?.docs ?? [];
