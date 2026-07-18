@@ -14,6 +14,10 @@ class ShortageCaseService {
     return ShortageCaseLogic.caseKey(teamId, materialId);
   }
 
+  static String activeDocumentId(String teamId, String materialId) {
+    return ShortageCaseLogic.activeDocumentId(teamId, materialId);
+  }
+
   Future<void> upsertOpenCase({
     required String teamId,
     required String teamName,
@@ -25,11 +29,8 @@ class ShortageCaseService {
     String? reportedByUid,
     String? reportedByEmail,
   }) async {
-    final snapshot = await _shortagesRef
-        .where('teamId', isEqualTo: teamId)
-        .where('materialId', isEqualTo: materialId)
-        .where('status', isEqualTo: 'open')
-        .get();
+    final docId = activeDocumentId(teamId, materialId);
+    final docRef = _shortagesRef.doc(docId);
 
     final payload = {
       'teamId': teamId,
@@ -43,62 +44,45 @@ class ShortageCaseService {
       'reportedByUid': reportedByUid,
       'reportedByEmail': reportedByEmail,
       'updatedAt': FieldValue.serverTimestamp(),
+      'caseKey': keyFor(teamId, materialId),
     };
 
-    if (snapshot.docs.isEmpty) {
-      final plan = ShortageCaseLogic.planUpsert(const []);
-      if (!plan.shouldCreate) return;
-      await _shortagesRef.add({
+    await firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(docRef);
+      if (snapshot.exists) {
+        transaction.set(docRef, {
+          ...payload,
+          'status': 'open',
+        }, SetOptions(merge: true));
+        return;
+      }
+
+      transaction.set(docRef, {
         ...payload,
         'createdAt': FieldValue.serverTimestamp(),
         'status': 'open',
       });
-      return;
-    }
-
-    final plan = ShortageCaseLogic.planUpsert(
-      snapshot.docs.map((doc) {
-        final data = doc.data();
-        final createdAt = data['createdAt'] as Timestamp?;
-        return ShortageCaseRecord(
-          docId: doc.id,
-          teamId: data['teamId'] as String? ?? teamId,
-          teamName: data['teamName'] as String? ?? teamName,
-          materialId: data['materialId'] as String? ?? materialId,
-          materialName: data['materialName'] as String? ?? materialName,
-          reportedQuantity:
-              (data['reportedQuantity'] as num?)?.toInt() ??
-              (data['quantity'] as num?)?.toInt() ??
-              0,
-          note: (data['note'] as String? ?? '').trim(),
-          source: data['source'] as String? ?? source,
-          reportedByEmail: data['reportedByEmail'] as String? ?? '',
-          createdAtMillis: createdAt?.millisecondsSinceEpoch ?? 0,
-        );
-      }),
-    );
-
-    if (plan.shouldCreate || plan.docIdToUpdate == null) {
-      await _shortagesRef.add({
-        ...payload,
-        'createdAt': FieldValue.serverTimestamp(),
-        'status': 'open',
-      });
-      return;
-    }
-
-    await _shortagesRef
-        .doc(plan.docIdToUpdate)
-        .set(payload, SetOptions(merge: true));
+    });
   }
 
   Future<void> closeCases({
     required Iterable<String> docIds,
     required Map<String, dynamic> resolutionFields,
   }) async {
+    final uniqueDocIds = docIds.toSet();
     final batch = firestore.batch();
-    for (final docId in docIds.toSet()) {
-      batch.update(_shortagesRef.doc(docId), resolutionFields);
+    for (final docId in uniqueDocIds) {
+      final sourceRef = _shortagesRef.doc(docId);
+      final snapshot = await sourceRef.get();
+      if (!snapshot.exists) continue;
+
+      final archiveRef = _shortagesRef.doc();
+      batch.set(archiveRef, {
+        ...snapshot.data()!,
+        ...resolutionFields,
+        'archivedFromDocId': docId,
+      });
+      batch.delete(sourceRef);
     }
     await batch.commit();
   }

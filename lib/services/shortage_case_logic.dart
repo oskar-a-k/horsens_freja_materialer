@@ -95,6 +95,12 @@ class ShortageCaseLogic {
     return '$teamId::$materialId';
   }
 
+  static String activeDocumentId(String teamId, String materialId) {
+    final safeTeamId = Uri.encodeComponent(teamId);
+    final safeMaterialId = Uri.encodeComponent(materialId);
+    return 'open__${safeTeamId}__$safeMaterialId';
+  }
+
   static bool isResolvedByStatusCandidate(int currentMissing) {
     return currentMissing <= 0;
   }

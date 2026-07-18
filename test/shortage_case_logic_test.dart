@@ -78,6 +78,20 @@ void main() {
     });
   });
 
+  group('ShortageCaseLogic.activeDocumentId', () {
+    test('builds one deterministic open document id per team and material', () {
+      final docId = ShortageCaseLogic.activeDocumentId('u16', 'ball');
+
+      expect(docId, 'open__u16__ball');
+    });
+
+    test('escapes slash characters so the id stays valid in Firestore', () {
+      final docId = ShortageCaseLogic.activeDocumentId('u16/a', 'ball/b');
+
+      expect(docId, 'open__u16%2Fa__ball%2Fb');
+    });
+  });
+
   group('ShortageCaseLogic.planUpsert', () {
     test('creates a new case when no open case exists', () {
       final plan = ShortageCaseLogic.planUpsert(const []);

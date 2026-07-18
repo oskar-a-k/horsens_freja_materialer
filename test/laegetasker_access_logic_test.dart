@@ -10,19 +10,19 @@ void main() {
   ];
 
   group('LaegetaskerAccessLogic.shouldLockTeams', () {
-    test('does not lock admins even when they have an assigned team', () {
+    test('does not lock admins even when they have assigned teams', () {
       final shouldLock = LaegetaskerAccessLogic.shouldLockTeams(
         isAdmin: true,
-        assignedTeam: teams[1],
+        assignedTeams: [teams[1], teams[2]],
       );
 
       expect(shouldLock, isFalse);
     });
 
-    test('locks non-admins when they have an assigned team', () {
+    test('locks non-admins when they have assigned teams', () {
       final shouldLock = LaegetaskerAccessLogic.shouldLockTeams(
         isAdmin: false,
-        assignedTeam: teams[1],
+        assignedTeams: [teams[1], teams[2]],
       );
 
       expect(shouldLock, isTrue);
@@ -34,27 +34,27 @@ void main() {
       final visible = LaegetaskerAccessLogic.visibleTeams(
         teams: teams,
         teamLocked: false,
-        assignedTeam: teams[1],
+        assignedTeams: [teams[1], teams[2]],
       );
 
       expect(visible.map((team) => team.id), ['u15', 'u16', 'u17']);
     });
 
-    test('shows only assigned team for locked coach state', () {
+    test('shows only assigned teams for locked coach state', () {
       final visible = LaegetaskerAccessLogic.visibleTeams(
         teams: teams,
         teamLocked: true,
-        assignedTeam: teams[1],
+        assignedTeams: [teams[1], teams[2]],
       );
 
-      expect(visible.map((team) => team.id), ['u16']);
+      expect(visible.map((team) => team.id), ['u16', 'u17']);
     });
 
-    test('shows all teams when no assigned team exists', () {
+    test('shows all teams when no assigned teams exist', () {
       final visible = LaegetaskerAccessLogic.visibleTeams(
         teams: teams,
         teamLocked: false,
-        assignedTeam: null,
+        assignedTeams: const [],
       );
 
       expect(visible.map((team) => team.id), ['u15', 'u16', 'u17']);

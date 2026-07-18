@@ -3,23 +3,25 @@ import '../models/team_model.dart';
 class LaegetaskerAccessLogic {
   static bool shouldLockTeams({
     required bool isAdmin,
-    required TeamModel? assignedTeam,
+    required List<TeamModel> assignedTeams,
   }) {
-    return !isAdmin && assignedTeam != null;
+    return !isAdmin && assignedTeams.isNotEmpty;
   }
 
   static List<TeamModel> visibleTeams({
     required List<TeamModel> teams,
     required bool teamLocked,
-    required TeamModel? assignedTeam,
+    required List<TeamModel> assignedTeams,
   }) {
-    if (!teamLocked || assignedTeam == null) {
+    if (!teamLocked || assignedTeams.isEmpty) {
       return teams;
     }
 
+    final assignedIds = assignedTeams.map((team) => team.id).toSet();
+
     return [
       for (final team in teams)
-        if (team.id == assignedTeam.id) team,
+        if (assignedIds.contains(team.id)) team,
     ];
   }
 }

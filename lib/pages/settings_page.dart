@@ -54,6 +54,7 @@ class _SettingsPageState extends State<SettingsPage> {
   };
 
   static const Map<String, String> _cadenceLabels = {
+    '': 'Ingen fast status',
     'every_2_weeks': 'Hver 2. uge',
     'monthly': 'Månedligt',
   };
@@ -64,7 +65,8 @@ class _SettingsPageState extends State<SettingsPage> {
     return null;
   }
 
-  int _cadenceDays(String cadence) {
+  int? _cadenceDays(String cadence) {
+    if (cadence.isEmpty) return null;
     return cadence == 'monthly' ? 30 : 14;
   }
 
@@ -73,6 +75,44 @@ class _SettingsPageState extends State<SettingsPage> {
       data['permissions'] as List<dynamic>? ?? const <String>[],
     );
     return permissions.contains('laegetasker');
+  }
+
+  List<String> _teamIdsFromUserData(Map<String, dynamic> data) {
+    final teams = List<String>.from(
+      data['teams'] as List<dynamic>? ?? const <String>[],
+    );
+    if (teams.isNotEmpty) return teams;
+
+    final teamId = data['teamId'] as String?;
+    if (teamId != null && teamId.isNotEmpty) {
+      return [teamId];
+    }
+    return const <String>[];
+  }
+
+  List<String> _teamNamesFromUserData(Map<String, dynamic> data) {
+    final teamNames = List<String>.from(
+      data['teamNames'] as List<dynamic>? ?? const <String>[],
+    );
+    if (teamNames.isNotEmpty) return teamNames;
+
+    final teamName = data['teamName'] as String?;
+    if (teamName != null && teamName.isNotEmpty) {
+      return [teamName];
+    }
+    return const <String>[];
+  }
+
+  String _teamSummaryFromUserData(Map<String, dynamic> data) {
+    final names = _teamNamesFromUserData(data);
+    if (names.isNotEmpty) {
+      return names.join(', ');
+    }
+    final ids = _teamIdsFromUserData(data);
+    if (ids.isNotEmpty) {
+      return ids.join(', ');
+    }
+    return 'ikke sat';
   }
 
   @override
@@ -192,9 +232,8 @@ class _SettingsPageState extends State<SettingsPage> {
     final selectedPermissions = Set<String>.from(
       List<String>.from(data['permissions'] as List<dynamic>? ?? ['hold']),
     );
-    String cadence = data['reportingCadence'] as String? ?? 'every_2_weeks';
-    String? teamId = data['teamId'] as String?;
-    String? teamName = data['teamName'] as String?;
+    String cadence = data['reportingCadence'] as String? ?? '';
+    final selectedTeamIds = <String>{..._teamIdsFromUserData(data)};
 
     final teamsSnapshot = await FirebaseFirestore.instance
         .collection('teams')
@@ -301,37 +340,31 @@ class _SettingsPageState extends State<SettingsPage> {
                       },
                     ),
                     const SizedBox(height: 12),
-                    DropdownButtonFormField<String?>(
-                      initialValue: teamId,
-                      decoration: const InputDecoration(
-                        labelText: 'Tilknyt hold',
-                      ),
-                      items: [
-                        const DropdownMenuItem<String?>(
-                          value: null,
-                          child: Text('Intet hold'),
-                        ),
-                        ...teams.map(
-                          (team) => DropdownMenuItem<String?>(
-                            value: team['id'] as String,
-                            child: Text(team['name'] as String),
-                          ),
-                        ),
-                      ],
-                      onChanged: (value) {
-                        setStateDialog(() {
-                          teamId = value;
-                          if (value == null) {
-                            teamName = null;
-                          } else {
-                            final found = teams.firstWhere(
-                              (t) => t['id'] == value,
-                              orElse: () => {'id': value, 'name': ''},
-                            );
-                            teamName = found['name'] as String;
-                          }
-                        });
-                      },
+                    const Text(
+                      'Tilknyttede hold',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: teams.map((team) {
+                        final teamId = team['id'] as String;
+                        final teamName = team['name'] as String;
+                        return FilterChip(
+                          selected: selectedTeamIds.contains(teamId),
+                          label: Text(teamName),
+                          onSelected: (selected) {
+                            setStateDialog(() {
+                              if (selected) {
+                                selectedTeamIds.add(teamId);
+                              } else {
+                                selectedTeamIds.remove(teamId);
+                              }
+                            });
+                          },
+                        );
+                      }).toList(),
                     ),
                   ],
                 ),
@@ -343,6 +376,20 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 ElevatedButton(
                   onPressed: () async {
+                    final selectedTeamNames = teams
+                        .where(
+                          (team) =>
+                              selectedTeamIds.contains(team['id'] as String),
+                        )
+                        .map((team) => team['name'] as String)
+                        .toList();
+                    final primaryTeamId = selectedTeamIds.isEmpty
+                        ? null
+                        : selectedTeamIds.first;
+                    final primaryTeamName = selectedTeamNames.isEmpty
+                        ? null
+                        : selectedTeamNames.first;
+
                     await FirebaseFirestore.instance
                         .collection('users')
                         .doc(userDoc.id)
@@ -351,8 +398,10 @@ class _SettingsPageState extends State<SettingsPage> {
                           'permissions': selectedPermissions.toList(),
                           'isAdmin': role == 'admin',
                           'reportingCadence': cadence,
-                          'teamId': teamId,
-                          'teamName': teamName,
+                          'teams': selectedTeamIds.toList(),
+                          'teamNames': selectedTeamNames,
+                          'teamId': primaryTeamId,
+                          'teamName': primaryTeamName,
                         }, SetOptions(merge: true));
                     if (!mounted) return;
                     messenger.showSnackBar(
@@ -569,17 +618,13 @@ class _SettingsPageState extends State<SettingsPage> {
                       final data = doc.data();
                       if (!_hasLaegetaskeAccess(data)) return false;
 
-                      final teamId = data['teamId'] as String?;
-                      final teamName = data['teamName'] as String?;
-                      final hasTeam =
-                          (teamId != null && teamId.isNotEmpty) ||
-                          (teamName != null && teamName.isNotEmpty);
+                      final teamIds = _teamIdsFromUserData(data);
+                      final hasTeam = teamIds.isNotEmpty;
                       if (!hasTeam) return false;
 
-                      final cadence =
-                          data['reportingCadence'] as String? ??
-                          'every_2_weeks';
+                      final cadence = data['reportingCadence'] as String? ?? '';
                       final dueDays = _cadenceDays(cadence);
+                      if (dueDays == null) return false;
 
                       final lastStatus = _toDateTime(data['lastStatusAt']);
                       if (lastStatus == null) return true;
@@ -604,14 +649,11 @@ class _SettingsPageState extends State<SettingsPage> {
                           ...overdue.map((doc) {
                             final data = doc.data();
                             final email = data['email'] as String? ?? 'ukendt';
-                            final teamName =
-                                data['teamName'] as String? ?? 'ikke sat';
+                            final teamSummary = _teamSummaryFromUserData(data);
                             final cadence =
-                                data['reportingCadence'] as String? ??
-                                'every_2_weeks';
+                                data['reportingCadence'] as String? ?? '';
                             final cadenceLabel =
-                                _cadenceLabels[cadence] ??
-                                _cadenceLabels['every_2_weeks']!;
+                                _cadenceLabels[cadence] ?? _cadenceLabels['']!;
                             final dueDays = _cadenceDays(cadence);
                             final lastStatus = _toDateTime(
                               data['lastStatusAt'],
@@ -619,7 +661,8 @@ class _SettingsPageState extends State<SettingsPage> {
                             final daysSince = lastStatus == null
                                 ? null
                                 : now.difference(lastStatus).inDays;
-                            final lateDays = lastStatus == null
+                            final lateDays =
+                                lastStatus == null || dueDays == null
                                 ? null
                                 : daysSince! - dueDays;
 
@@ -630,8 +673,8 @@ class _SettingsPageState extends State<SettingsPage> {
                                 title: Text(email),
                                 subtitle: Text(
                                   lastStatus == null
-                                      ? 'Hold: $teamName · Status: $cadenceLabel · Har ikke indsendt endnu'
-                                      : 'Hold: $teamName · Status: $cadenceLabel · Forsinket: ${lateDays! < 0 ? 0 : lateDays} dage',
+                                      ? 'Hold: $teamSummary · Status: $cadenceLabel · Har ikke indsendt endnu'
+                                      : 'Hold: $teamSummary · Status: $cadenceLabel · Forsinket: ${lateDays! < 0 ? 0 : lateDays} dage',
                                 ),
                                 trailing: IconButton(
                                   icon: const Icon(Icons.edit_calendar),
@@ -648,18 +691,18 @@ class _SettingsPageState extends State<SettingsPage> {
                           final data = doc.data();
                           final email = data['email'] as String? ?? 'ukendt';
                           final role = data['role'] as String? ?? 'viewer';
-                          final teamName = data['teamName'] as String?;
-                          final cadence = data['reportingCadence'] as String?;
+                          final teamSummary = _teamSummaryFromUserData(data);
+                          final cadence =
+                              data['reportingCadence'] as String? ?? '';
                           final cadenceLabel =
-                              _cadenceLabels[cadence] ??
-                              _cadenceLabels['every_2_weeks']!;
+                              _cadenceLabels[cadence] ?? _cadenceLabels['']!;
 
                           return Card(
                             margin: const EdgeInsets.symmetric(vertical: 6),
                             child: ListTile(
                               title: Text(email),
                               subtitle: Text(
-                                'Rolle: ${_roleLabels[role] ?? role} · Hold: ${teamName ?? 'ikke sat'} · Status: $cadenceLabel',
+                                'Rolle: ${_roleLabels[role] ?? role} · Hold: $teamSummary · Status: $cadenceLabel',
                               ),
                               trailing: IconButton(
                                 icon: const Icon(Icons.edit),

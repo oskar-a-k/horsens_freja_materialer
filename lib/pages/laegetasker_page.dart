@@ -29,10 +29,10 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
 
   List<TeamModel> _teams = [];
   List<MaterialModel> _materials = [];
-  TeamModel? _assignedTeam;
+  List<TeamModel> _assignedTeams = [];
   bool _loading = true;
   String? _error;
-  String _reportingCadence = 'every_2_weeks';
+  String _reportingCadence = '';
   bool _teamLocked = false;
 
   @override
@@ -53,7 +53,7 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
       final teams = await teamsFuture;
       final materials = await materialsFuture;
 
-      TeamModel? initialTeam;
+      final initialTeams = <TeamModel>[];
       final user = FirebaseAuth.instance.currentUser;
       var isAdmin = false;
 
@@ -75,54 +75,81 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
           _reportingCadence = cadence;
         }
 
+        final userTeamIds = List<String>.from(
+          userData?['teams'] as List<dynamic>? ?? const <String>[],
+        );
+        final userTeamNames = List<String>.from(
+          userData?['teamNames'] as List<dynamic>? ?? const <String>[],
+        );
         final userTeamId = userData?['teamId'] as String?;
         final userTeamName = userData?['teamName'] as String?;
 
-        if (userTeamId != null && userTeamId.isNotEmpty) {
+        for (final team in teams) {
+          if (userTeamIds.contains(team.id)) {
+            initialTeams.add(team);
+          }
+        }
+
+        if (initialTeams.isEmpty && userTeamNames.isNotEmpty) {
+          final loweredNames = userTeamNames
+              .map((name) => name.toLowerCase())
+              .toSet();
+          for (final team in teams) {
+            if (loweredNames.contains(team.name.toLowerCase())) {
+              initialTeams.add(team);
+            }
+          }
+        }
+
+        if (initialTeams.isEmpty &&
+            userTeamId != null &&
+            userTeamId.isNotEmpty) {
           for (final team in teams) {
             if (team.id == userTeamId) {
-              initialTeam = team;
+              initialTeams.add(team);
               break;
             }
           }
         }
 
-        if (initialTeam == null &&
+        if (initialTeams.isEmpty &&
             userTeamName != null &&
             userTeamName.isNotEmpty) {
           for (final team in teams) {
             if (team.name.toLowerCase() == userTeamName.toLowerCase()) {
-              initialTeam = team;
+              initialTeams.add(team);
               break;
             }
           }
         }
 
-        if (initialTeam == null) {
+        if (initialTeams.isEmpty) {
           for (final team in teams) {
             if (team.coachId == user.uid) {
-              initialTeam = team;
-              break;
+              initialTeams.add(team);
             }
           }
         }
 
         _teamLocked = LaegetaskerAccessLogic.shouldLockTeams(
           isAdmin: isAdmin,
-          assignedTeam: initialTeam,
+          assignedTeams: initialTeams,
         );
       }
 
-      initialTeam ??= _assignedTeam;
-      if (initialTeam == null && teams.length == 1) {
-        initialTeam = teams.first;
+      var resolvedAssignedTeams = initialTeams;
+      if (resolvedAssignedTeams.isEmpty && _assignedTeams.isNotEmpty) {
+        resolvedAssignedTeams = _assignedTeams;
+      }
+      if (resolvedAssignedTeams.isEmpty && teams.length == 1) {
+        resolvedAssignedTeams = [teams.first];
       }
 
       if (!mounted) return;
       setState(() {
         _teams = teams;
         _materials = materials;
-        _assignedTeam = initialTeam;
+        _assignedTeams = resolvedAssignedTeams;
       });
     } catch (e) {
       if (!mounted) return;
@@ -320,11 +347,13 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
     final user = FirebaseAuth.instance.currentUser;
     final cadenceLabel = _reportingCadence == 'monthly'
         ? 'Månedligt'
-        : 'Hver 2. uge';
+        : _reportingCadence == 'every_2_weeks'
+        ? 'Hver 2. uge'
+        : 'Ingen fast status';
     final visibleTeams = LaegetaskerAccessLogic.visibleTeams(
       teams: _teams,
       teamLocked: _teamLocked,
-      assignedTeam: _assignedTeam,
+      assignedTeams: _assignedTeams,
     );
 
     return Scaffold(
@@ -345,7 +374,7 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
               child: visibleTeams.isEmpty
                   ? const Center(
                       child: Text(
-                        'Ingen hold fundet. Hvis en træner kun skal se eget hold, tilknyt teamId eller teamName på bruger i users-samlingen.',
+                        'Ingen hold fundet. Hvis en træner kun skal se egne hold, tilknyt teams eller teamNames på brugeren i users-samlingen.',
                         textAlign: TextAlign.center,
                       ),
                     )
