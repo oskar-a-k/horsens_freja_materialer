@@ -224,6 +224,59 @@ class _SettingsPageState extends State<SettingsPage> {
     await FirebaseAuth.instance.signOut();
   }
 
+  Future<void> _sendPasswordResetForUser(String email) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        final dialogNavigator = Navigator.of(context);
+        return AlertDialog(
+          title: const Text('Send nulstilling af kodeord'),
+          content: Text(
+            'Vil du sende mail med nulstilling af kodeord til $email?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => dialogNavigator.pop(false),
+              child: const Text('Annuller'),
+            ),
+            ElevatedButton(
+              onPressed: () => dialogNavigator.pop(true),
+              child: const Text('Send mail'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) return;
+    try {
+      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('Mail med nulstilling af kodeord er sendt til $email.'),
+        ),
+      );
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            e.message ?? 'Kunne ikke sende mail med nulstilling af kodeord.',
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Kunne ikke sende mail med nulstilling af kodeord.'),
+        ),
+      );
+    }
+  }
+
   Future<void> _editUserSetup(
     QueryDocumentSnapshot<Map<String, dynamic>> userDoc,
   ) async {
@@ -676,10 +729,24 @@ class _SettingsPageState extends State<SettingsPage> {
                                       ? 'Hold: $teamSummary · Status: $cadenceLabel · Har ikke indsendt endnu'
                                       : 'Hold: $teamSummary · Status: $cadenceLabel · Forsinket: ${lateDays! < 0 ? 0 : lateDays} dage',
                                 ),
-                                trailing: IconButton(
-                                  icon: const Icon(Icons.edit_calendar),
-                                  tooltip: 'Redigér bruger',
-                                  onPressed: () => _editUserSetup(doc),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(Icons.lock_reset),
+                                      tooltip: 'Send nulstilling af kodeord',
+                                      onPressed: email == 'ukendt'
+                                          ? null
+                                          : () => _sendPasswordResetForUser(
+                                              email,
+                                            ),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.edit_calendar),
+                                      tooltip: 'Redigér bruger',
+                                      onPressed: () => _editUserSetup(doc),
+                                    ),
+                                  ],
                                 ),
                               ),
                             );
@@ -704,10 +771,23 @@ class _SettingsPageState extends State<SettingsPage> {
                               subtitle: Text(
                                 'Rolle: ${_roleLabels[role] ?? role} · Hold: $teamSummary · Status: $cadenceLabel',
                               ),
-                              trailing: IconButton(
-                                icon: const Icon(Icons.edit),
-                                tooltip: 'Redigér bruger',
-                                onPressed: () => _editUserSetup(doc),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.lock_reset),
+                                    tooltip: 'Send nulstilling af kodeord',
+                                    onPressed: email == 'ukendt'
+                                        ? null
+                                        : () =>
+                                              _sendPasswordResetForUser(email),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.edit),
+                                    tooltip: 'Redigér bruger',
+                                    onPressed: () => _editUserSetup(doc),
+                                  ),
+                                ],
                               ),
                             ),
                           );
