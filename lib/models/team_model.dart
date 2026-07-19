@@ -1,12 +1,16 @@
 class TeamKitSetModel {
   final String id;
   final String setNumber;
+  final String jerseyColor;
   final String jerseySize;
   final String jerseyStatus;
+  final String shortsColor;
   final String shortsSize;
   final String shortsStatus;
+  final String socksColor;
   final String socksSize;
   final String socksStatus;
+  final String duffelbagColor;
   final String duffelbagStatus;
   final String? note;
   final DateTime? createdAt;
@@ -15,12 +19,16 @@ class TeamKitSetModel {
   TeamKitSetModel({
     required this.id,
     required this.setNumber,
+    this.jerseyColor = '',
     this.jerseySize = '',
     this.jerseyStatus = 'ok',
+    this.shortsColor = '',
     this.shortsSize = '',
     this.shortsStatus = 'ok',
+    this.socksColor = '',
     this.socksSize = '',
     this.socksStatus = 'ok',
+    this.duffelbagColor = '',
     this.duffelbagStatus = 'ok',
     this.note,
     this.createdAt,
@@ -30,12 +38,16 @@ class TeamKitSetModel {
   TeamKitSetModel copyWith({
     String? id,
     String? setNumber,
+    String? jerseyColor,
     String? jerseySize,
     String? jerseyStatus,
+    String? shortsColor,
     String? shortsSize,
     String? shortsStatus,
+    String? socksColor,
     String? socksSize,
     String? socksStatus,
+    String? duffelbagColor,
     String? duffelbagStatus,
     String? note,
     DateTime? createdAt,
@@ -44,12 +56,16 @@ class TeamKitSetModel {
     return TeamKitSetModel(
       id: id ?? this.id,
       setNumber: setNumber ?? this.setNumber,
+      jerseyColor: jerseyColor ?? this.jerseyColor,
       jerseySize: jerseySize ?? this.jerseySize,
       jerseyStatus: jerseyStatus ?? this.jerseyStatus,
+      shortsColor: shortsColor ?? this.shortsColor,
       shortsSize: shortsSize ?? this.shortsSize,
       shortsStatus: shortsStatus ?? this.shortsStatus,
+      socksColor: socksColor ?? this.socksColor,
       socksSize: socksSize ?? this.socksSize,
       socksStatus: socksStatus ?? this.socksStatus,
+      duffelbagColor: duffelbagColor ?? this.duffelbagColor,
       duffelbagStatus: duffelbagStatus ?? this.duffelbagStatus,
       note: note ?? this.note,
       createdAt: createdAt ?? this.createdAt,
@@ -61,12 +77,16 @@ class TeamKitSetModel {
     return TeamKitSetModel(
       id: map['id'] as String? ?? '',
       setNumber: map['setNumber'] as String? ?? '',
+      jerseyColor: map['jerseyColor'] as String? ?? '',
       jerseySize: map['jerseySize'] as String? ?? '',
       jerseyStatus: map['jerseyStatus'] as String? ?? 'ok',
+      shortsColor: map['shortsColor'] as String? ?? '',
       shortsSize: map['shortsSize'] as String? ?? '',
       shortsStatus: map['shortsStatus'] as String? ?? 'ok',
+      socksColor: map['socksColor'] as String? ?? '',
       socksSize: map['socksSize'] as String? ?? '',
       socksStatus: map['socksStatus'] as String? ?? 'ok',
+      duffelbagColor: map['duffelbagColor'] as String? ?? '',
       duffelbagStatus: map['duffelbagStatus'] as String? ?? 'ok',
       note: map['note'] as String?,
       createdAt: map['createdAt'] is String
@@ -82,12 +102,16 @@ class TeamKitSetModel {
     return {
       'id': id,
       'setNumber': setNumber,
+      'jerseyColor': jerseyColor,
       'jerseySize': jerseySize,
       'jerseyStatus': jerseyStatus,
+      'shortsColor': shortsColor,
       'shortsSize': shortsSize,
       'shortsStatus': shortsStatus,
+      'socksColor': socksColor,
       'socksSize': socksSize,
       'socksStatus': socksStatus,
+      'duffelbagColor': duffelbagColor,
       'duffelbagStatus': duffelbagStatus,
       'note': note,
       'createdAt': createdAt?.toIso8601String(),

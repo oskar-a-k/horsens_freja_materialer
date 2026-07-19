@@ -10,12 +10,16 @@ void main() {
         TeamKitSetModel(
           id: 'set-1',
           setNumber: '8',
+          jerseyColor: 'hvid',
           jerseySize: 'M',
           jerseyStatus: 'ok',
+          shortsColor: 'rød',
           shortsSize: 'M',
           shortsStatus: 'ok',
+          socksColor: 'rød',
           socksSize: '38-41',
           socksStatus: 'skal udskiftes',
+          duffelbagColor: 'orange',
           duffelbagStatus: 'ok',
           note: 'Eksempel',
         ),
@@ -27,8 +31,12 @@ void main() {
 
     expect(decoded.kitSets, hasLength(1));
     expect(decoded.kitSets.first.setNumber, '8');
+    expect(decoded.kitSets.first.jerseyColor, 'hvid');
     expect(decoded.kitSets.first.jerseySize, 'M');
+    expect(decoded.kitSets.first.shortsColor, 'rød');
     expect(decoded.kitSets.first.socksStatus, 'skal udskiftes');
+    expect(decoded.kitSets.first.socksColor, 'rød');
+    expect(decoded.kitSets.first.duffelbagColor, 'orange');
     expect(decoded.kitSets.first.duffelbagStatus, 'ok');
     expect(decoded.kitSets.first.note, 'Eksempel');
   });

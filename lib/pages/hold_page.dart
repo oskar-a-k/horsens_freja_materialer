@@ -429,6 +429,18 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
     'mangler',
     'skal udskiftes',
   ];
+  static const List<String> _kitColorOptions = [
+    '',
+    'hvid',
+    'rød',
+    'orange',
+    'blå',
+    'sort',
+    'grøn',
+    'gul',
+    'grå',
+    'navy',
+  ];
   late TeamModel _team;
   List<MaterialModel> _materials = [];
   final Map<String, bool> _categoryExpanded = {};
@@ -598,6 +610,10 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
     return value.trim().isEmpty ? 'ikke sat' : value.trim();
   }
 
+  String _kitColorLabel(String value) {
+    return value.trim().isEmpty ? 'ikke sat' : value.trim();
+  }
+
   Color _kitStatusColor(String value) {
     switch (value) {
       case 'ok':
@@ -697,16 +713,20 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
 
   Future<void> _showKitSetDialog({TeamKitSetModel? existing}) async {
     final numberCtrl = TextEditingController(text: existing?.setNumber ?? '');
+    String jerseyColor = existing?.jerseyColor ?? '';
     final jerseySizeCtrl = TextEditingController(
       text: existing?.jerseySize ?? '',
     );
     final shortsSizeCtrl = TextEditingController(
       text: existing?.shortsSize ?? '',
     );
+    String shortsColor = existing?.shortsColor ?? '';
     final socksSizeCtrl = TextEditingController(
       text: existing?.socksSize ?? '',
     );
+    String socksColor = existing?.socksColor ?? '';
     final noteCtrl = TextEditingController(text: existing?.note ?? '');
+    String duffelbagColor = existing?.duffelbagColor ?? '';
     String jerseyStatus = existing?.jerseyStatus ?? 'ok';
     String shortsStatus = existing?.shortsStatus ?? 'ok';
     String socksStatus = existing?.socksStatus ?? 'ok';
@@ -731,6 +751,25 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                       decoration: const InputDecoration(
                         labelText: 'Nummer på sættet / rygnummer',
                       ),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      initialValue: jerseyColor,
+                      decoration: const InputDecoration(
+                        labelText: 'Trøje farve',
+                      ),
+                      items: _kitColorOptions
+                          .map(
+                            (value) => DropdownMenuItem<String>(
+                              value: value,
+                              child: Text(_kitColorLabel(value)),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setStateDialog(() => jerseyColor = value);
+                      },
                     ),
                     const SizedBox(height: 8),
                     TextField(
@@ -767,6 +806,25 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                     ),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<String>(
+                      initialValue: shortsColor,
+                      decoration: const InputDecoration(
+                        labelText: 'Shorts farve',
+                      ),
+                      items: _kitColorOptions
+                          .map(
+                            (value) => DropdownMenuItem<String>(
+                              value: value,
+                              child: Text(_kitColorLabel(value)),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setStateDialog(() => shortsColor = value);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
                       initialValue: shortsStatus,
                       decoration: const InputDecoration(
                         labelText: 'Shorts status',
@@ -790,6 +848,25 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                       decoration: const InputDecoration(
                         labelText: 'Strømper størrelse',
                       ),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      initialValue: socksColor,
+                      decoration: const InputDecoration(
+                        labelText: 'Strømper farve',
+                      ),
+                      items: _kitColorOptions
+                          .map(
+                            (value) => DropdownMenuItem<String>(
+                              value: value,
+                              child: Text(_kitColorLabel(value)),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setStateDialog(() => socksColor = value);
+                      },
                     ),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<String>(
@@ -830,6 +907,25 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                       },
                     ),
                     const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      initialValue: duffelbagColor,
+                      decoration: const InputDecoration(
+                        labelText: 'Duffelbag farve',
+                      ),
+                      items: _kitColorOptions
+                          .map(
+                            (value) => DropdownMenuItem<String>(
+                              value: value,
+                              child: Text(_kitColorLabel(value)),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setStateDialog(() => duffelbagColor = value);
+                      },
+                    ),
+                    const SizedBox(height: 8),
                     TextField(
                       controller: noteCtrl,
                       decoration: const InputDecoration(
@@ -853,12 +949,16 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                     final kitSet = TeamKitSetModel(
                       id: existing?.id ?? now.millisecondsSinceEpoch.toString(),
                       setNumber: number,
+                      jerseyColor: jerseyColor,
                       jerseySize: jerseySizeCtrl.text.trim(),
                       jerseyStatus: jerseyStatus,
+                      shortsColor: shortsColor,
                       shortsSize: shortsSizeCtrl.text.trim(),
                       shortsStatus: shortsStatus,
+                      socksColor: socksColor,
                       socksSize: socksSizeCtrl.text.trim(),
                       socksStatus: socksStatus,
+                      duffelbagColor: duffelbagColor,
                       duffelbagStatus: duffelbagStatus,
                       note: noteCtrl.text.trim().isEmpty
                           ? null
@@ -995,22 +1095,22 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                           children: [
                             Chip(
                               label: Text(
-                                'Trøje: ${_kitSizeLabel(kitSet.jerseySize)} · ${_kitStatusLabel(kitSet.jerseyStatus)}',
+                                'Trøje: ${_kitColorLabel(kitSet.jerseyColor)} · ${_kitSizeLabel(kitSet.jerseySize)} · ${_kitStatusLabel(kitSet.jerseyStatus)}',
                               ),
                             ),
                             Chip(
                               label: Text(
-                                'Shorts: ${_kitSizeLabel(kitSet.shortsSize)} · ${_kitStatusLabel(kitSet.shortsStatus)}',
+                                'Shorts: ${_kitColorLabel(kitSet.shortsColor)} · ${_kitSizeLabel(kitSet.shortsSize)} · ${_kitStatusLabel(kitSet.shortsStatus)}',
                               ),
                             ),
                             Chip(
                               label: Text(
-                                'Strømper: ${_kitSizeLabel(kitSet.socksSize)} · ${_kitStatusLabel(kitSet.socksStatus)}',
+                                'Strømper: ${_kitColorLabel(kitSet.socksColor)} · ${_kitSizeLabel(kitSet.socksSize)} · ${_kitStatusLabel(kitSet.socksStatus)}',
                               ),
                             ),
                             Chip(
                               label: Text(
-                                'Duffelbag: ${_kitStatusLabel(kitSet.duffelbagStatus)}',
+                                'Duffelbag: ${_kitColorLabel(kitSet.duffelbagColor)} · ${_kitStatusLabel(kitSet.duffelbagStatus)}',
                               ),
                             ),
                           ],
