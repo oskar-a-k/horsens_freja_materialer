@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../models/team_model.dart';
 import '../models/material_model.dart';
 import '../services/inventory_service.dart';
+import '../services/shortage_case_service.dart';
 
 class HoldPage extends StatefulWidget {
   final InventoryService service;
@@ -39,14 +40,18 @@ class _HoldPageState extends State<HoldPage> {
     super.initState();
     _service = widget.service;
     _loadAll();
-    _loadAccess();
   }
 
-  Future<void> _loadAccess() async {
+  Future<void> _loadAll() async {
+    final teams = await _service.listTeams();
     final currentUser = FirebaseAuth.instance.currentUser;
+
     if (currentUser == null) {
       if (!mounted) return;
-      setState(() => _canManageTeamMaterials = false);
+      setState(() {
+        _canManageTeamMaterials = false;
+        _teams = teams;
+      });
       return;
     }
 
@@ -55,31 +60,69 @@ class _HoldPageState extends State<HoldPage> {
         currentEmail != null && _adminOverrideEmails.contains(currentEmail);
 
     try {
-      final snapshot = await FirebaseFirestore.instance
+      final userSnapshot = await FirebaseFirestore.instance
           .collection('users')
           .doc(currentUser.uid)
           .get();
+      final userData = userSnapshot.data();
 
-      final isAdmin = snapshot.data()?['isAdmin'] as bool? ?? false;
-      final role = (snapshot.data()?['role'] as String? ?? '')
-          .trim()
-          .toLowerCase();
+      final isAdmin = userData?['isAdmin'] as bool? ?? false;
+      final role = (userData?['role'] as String? ?? '').trim().toLowerCase();
       final canManage =
           hasOverrideAdmin || isAdmin || _materialManagerRoles.contains(role);
 
+      final teamIds = List<String>.from(
+        userData?['teams'] as List<dynamic>? ?? const <String>[],
+      );
+      final teamNames = List<String>.from(
+        userData?['teamNames'] as List<dynamic>? ?? const <String>[],
+      );
+      final teamId = userData?['teamId'] as String?;
+      final teamName = userData?['teamName'] as String?;
+
+      final assignedTeamIds = <String>{...teamIds};
+
+      if (assignedTeamIds.isEmpty && teamId != null && teamId.isNotEmpty) {
+        assignedTeamIds.add(teamId);
+      }
+
+      if (teamNames.isNotEmpty || (teamName != null && teamName.isNotEmpty)) {
+        final lookup = {
+          ...teamNames.map((name) => name.toLowerCase()),
+          if (teamName != null && teamName.isNotEmpty) teamName.toLowerCase(),
+        };
+        for (final team in teams) {
+          if (lookup.contains(team.name.toLowerCase())) {
+            assignedTeamIds.add(team.id);
+          }
+        }
+      }
+
+      if (assignedTeamIds.isEmpty) {
+        for (final team in teams) {
+          if (team.coachId == currentUser.uid) {
+            assignedTeamIds.add(team.id);
+          }
+        }
+      }
+
+      final teamLocked = !canManage && assignedTeamIds.isNotEmpty;
+      final visibleTeams = teamLocked
+          ? teams.where((team) => assignedTeamIds.contains(team.id)).toList()
+          : teams;
+
       if (!mounted) return;
-      setState(() => _canManageTeamMaterials = canManage);
+      setState(() {
+        _canManageTeamMaterials = canManage;
+        _teams = visibleTeams;
+      });
     } catch (_) {
       if (!mounted) return;
-      setState(() => _canManageTeamMaterials = hasOverrideAdmin);
+      setState(() {
+        _canManageTeamMaterials = hasOverrideAdmin;
+        _teams = hasOverrideAdmin ? teams : <TeamModel>[];
+      });
     }
-  }
-
-  Future<void> _loadAll() async {
-    final teams = await _service.listTeams();
-    setState(() {
-      _teams = teams;
-    });
   }
 
   Future<void> _addTeam() async {
@@ -377,6 +420,10 @@ class TeamDetailPage extends StatefulWidget {
 }
 
 class _TeamDetailPageState extends State<TeamDetailPage> {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  late final ShortageCaseService _shortageCaseService = ShortageCaseService(
+    firestore: _firestore,
+  );
   late TeamModel _team;
   List<MaterialModel> _materials = [];
   final Map<String, bool> _categoryExpanded = {};
@@ -467,6 +514,11 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.assignment_turned_in),
+                            tooltip: 'Indmeld status',
+                            onPressed: () => _reportMaterialStatus(entry.key),
                           ),
                           if (widget.canManageTeamMaterials)
                             IconButton(
@@ -871,6 +923,141 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                 dialogNavigator.pop();
               },
               child: const Text('Returner'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _reportMaterialStatus(String materialId) async {
+    final material = _materialForId(materialId);
+    final materialLabel = _materialLabel(material);
+    final currentStatus = _team.holdings[materialId] ?? 0;
+    final expected = _team.expectedHoldings[materialId];
+    final statusCtrl = TextEditingController(text: currentStatus.toString());
+    final reasonCtrl = TextEditingController();
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        final dialogNavigator = Navigator.of(context);
+        final messenger = ScaffoldMessenger.of(context);
+
+        return AlertDialog(
+          title: const Text('Indmeld status på materiale'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(materialLabel),
+                const SizedBox(height: 8),
+                Text('Registreret status: $currentStatus ${material.unit}'),
+                Text(
+                  expected == null
+                      ? 'Forventet beholdning: ikke sat'
+                      : 'Forventet beholdning: $expected ${material.unit}',
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: statusCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Status nu (antal)',
+                  ),
+                ),
+                TextField(
+                  controller: reasonCtrl,
+                  minLines: 2,
+                  maxLines: 4,
+                  decoration: const InputDecoration(
+                    labelText: 'Begrundelse ved mangel',
+                    hintText:
+                        'Påkrævet når status er lavere end forventet beholdning.',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => dialogNavigator.pop(),
+              child: const Text('Annuller'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final reported = int.tryParse(statusCtrl.text.trim());
+                if (reported == null || reported < 0) return;
+
+                final missing = expected == null
+                    ? 0
+                    : (expected - reported) > 0
+                    ? (expected - reported)
+                    : 0;
+                final reason = reasonCtrl.text.trim();
+                if (missing > 0 && reason.isEmpty) {
+                  messenger.showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Skriv begrundelse, når der er mangel på materialet.',
+                      ),
+                    ),
+                  );
+                  return;
+                }
+
+                try {
+                  final user = FirebaseAuth.instance.currentUser;
+                  await _firestore.collection('bag_status_reports').add({
+                    'teamId': _team.id,
+                    'teamName': _team.name,
+                    'materialId': materialId,
+                    'materialName': materialLabel,
+                    'reportedQuantity': reported,
+                    'registeredQuantity': currentStatus,
+                    'expectedQuantity': expected,
+                    'missingQuantity': missing,
+                    'note': reason,
+                    'source': 'hold_status',
+                    'createdAt': FieldValue.serverTimestamp(),
+                    'reportedByUid': user?.uid,
+                    'reportedByEmail': user?.email,
+                  });
+
+                  if (missing > 0) {
+                    await _shortageCaseService.upsertOpenCase(
+                      teamId: _team.id,
+                      teamName: _team.name,
+                      materialId: materialId,
+                      materialName: materialLabel,
+                      reportedQuantity: missing,
+                      note: reason,
+                      source: 'hold_status_report',
+                      reportedByUid: user?.uid,
+                      reportedByEmail: user?.email,
+                    );
+                  }
+
+                  if (!mounted) return;
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        missing > 0
+                            ? 'Status gemt. Mangelsag er oprettet/opdateret.'
+                            : 'Status gemt.',
+                      ),
+                    ),
+                  );
+                  dialogNavigator.pop();
+                } catch (e) {
+                  if (!mounted) return;
+                  messenger.showSnackBar(
+                    SnackBar(content: Text('Kunne ikke gemme status: $e')),
+                  );
+                }
+              },
+              child: const Text('Gem status'),
             ),
           ],
         );
