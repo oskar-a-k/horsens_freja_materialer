@@ -1,0 +1,78 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function currentUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function hasAdminOverrideEmail() {
+      return signedIn() && request.auth.token.email == 'materialer@horsensfreja.dk';
+    }
+
+    function isAdmin() {
+      return signedIn() && (
+        hasAdminOverrideEmail() ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          currentUserData().isAdmin == true) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          currentUserData().role == 'admin')
+      );
+    }
+
+    function isMaterialManager() {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        (
+          currentUserData().role == 'manager' ||
+          currentUserData().role == 'materialforvalter' ||
+          currentUserData().role == 'materialeforvalter' ||
+          currentUserData().role == 'materialeansvarlig'
+        );
+    }
+
+    function canManageTeamMaterials() {
+      return isAdmin() || isMaterialManager();
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn() && (isAdmin() || request.auth.uid == userId);
+      allow create: if signedIn() && request.auth.uid == userId;
+      allow update, delete: if signedIn() && (isAdmin() || request.auth.uid == userId);
+    }
+
+    match /teams/{teamId} {
+      allow read: if signedIn();
+      allow create, update, delete: if canManageTeamMaterials();
+    }
+
+    match /materials/{materialId} {
+      allow read: if signedIn();
+      allow create, update, delete: if canManageTeamMaterials();
+    }
+
+    match /transactions/{transactionId} {
+      allow read: if signedIn();
+      allow create, update, delete: if canManageTeamMaterials();
+    }
+
+    match /bag_shortages/{docId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn();
+      allow delete: if canManageTeamMaterials();
+    }
+
+    match /bag_status_reports/{docId} {
+      allow read: if signedIn();
+      allow create: if signedIn();
+      allow update, delete: if isAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

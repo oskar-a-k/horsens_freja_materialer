@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../models/team_model.dart';
@@ -16,24 +18,67 @@ class HoldPage extends StatefulWidget {
 }
 
 class _HoldPageState extends State<HoldPage> {
+  static const Set<String> _adminOverrideEmails = {
+    'materialer@horsensfreja.dk',
+  };
+
+  static const Set<String> _materialManagerRoles = {
+    'manager',
+    'materialforvalter',
+    'materialeforvalter',
+    'materialeansvarlig',
+  };
+
   late final InventoryService _service;
   List<TeamModel> _teams = [];
-  List<MaterialModel> _materials = [];
   String _teamSearch = '';
+  bool _canManageTeamMaterials = false;
 
   @override
   void initState() {
     super.initState();
     _service = widget.service;
     _loadAll();
+    _loadAccess();
+  }
+
+  Future<void> _loadAccess() async {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) {
+      if (!mounted) return;
+      setState(() => _canManageTeamMaterials = false);
+      return;
+    }
+
+    final currentEmail = currentUser.email?.toLowerCase();
+    final hasOverrideAdmin =
+        currentEmail != null && _adminOverrideEmails.contains(currentEmail);
+
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(currentUser.uid)
+          .get();
+
+      final isAdmin = snapshot.data()?['isAdmin'] as bool? ?? false;
+      final role = (snapshot.data()?['role'] as String? ?? '')
+          .trim()
+          .toLowerCase();
+      final canManage =
+          hasOverrideAdmin || isAdmin || _materialManagerRoles.contains(role);
+
+      if (!mounted) return;
+      setState(() => _canManageTeamMaterials = canManage);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _canManageTeamMaterials = hasOverrideAdmin);
+    }
   }
 
   Future<void> _loadAll() async {
     final teams = await _service.listTeams();
-    final materials = await _service.listMaterials();
     setState(() {
       _teams = teams;
-      _materials = materials;
     });
   }
 
@@ -181,7 +226,11 @@ class _HoldPageState extends State<HoldPage> {
   void _openTeamDetail(TeamModel team) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => TeamDetailPage(service: _service, team: team),
+        builder: (context) => TeamDetailPage(
+          service: _service,
+          team: team,
+          canManageTeamMaterials: _canManageTeamMaterials,
+        ),
       ),
     );
   }
@@ -190,10 +239,12 @@ class _HoldPageState extends State<HoldPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Hold')),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _addTeam,
-        child: const Icon(Icons.add),
-      ),
+      floatingActionButton: _canManageTeamMaterials
+          ? FloatingActionButton(
+              onPressed: _addTeam,
+              child: const Icon(Icons.add),
+            )
+          : null,
       body: Column(
         children: [
           Padding(
@@ -242,17 +293,19 @@ class _HoldPageState extends State<HoldPage> {
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              IconButton(
-                                icon: const Icon(Icons.edit),
-                                onPressed: () => _editTeam(team),
-                              ),
-                              IconButton(
-                                icon: const Icon(
-                                  Icons.delete,
-                                  color: Colors.red,
+                              if (_canManageTeamMaterials)
+                                IconButton(
+                                  icon: const Icon(Icons.edit),
+                                  onPressed: () => _editTeam(team),
                                 ),
-                                onPressed: () => _deleteTeam(team),
-                              ),
+                              if (_canManageTeamMaterials)
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.delete,
+                                    color: Colors.red,
+                                  ),
+                                  onPressed: () => _deleteTeam(team),
+                                ),
                             ],
                           ),
                         ),
@@ -269,8 +322,14 @@ class _HoldPageState extends State<HoldPage> {
 class TeamDetailPage extends StatefulWidget {
   final InventoryService service;
   final TeamModel team;
+  final bool canManageTeamMaterials;
 
-  const TeamDetailPage({super.key, required this.service, required this.team});
+  const TeamDetailPage({
+    super.key,
+    required this.service,
+    required this.team,
+    required this.canManageTeamMaterials,
+  });
 
   @override
   State<TeamDetailPage> createState() => _TeamDetailPageState();
@@ -368,16 +427,18 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                               ),
                             ),
                           ),
-                          IconButton(
-                            icon: const Icon(Icons.flag_outlined),
-                            tooltip: 'Sæt forventet beholdning',
-                            onPressed: () => _setExpectedHolding(entry.key),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.undo),
-                            tooltip: 'Returner materiale',
-                            onPressed: () => _returnMaterial(entry.key),
-                          ),
+                          if (widget.canManageTeamMaterials)
+                            IconButton(
+                              icon: const Icon(Icons.flag_outlined),
+                              tooltip: 'Sæt forventet beholdning',
+                              onPressed: () => _setExpectedHolding(entry.key),
+                            ),
+                          if (widget.canManageTeamMaterials)
+                            IconButton(
+                              icon: const Icon(Icons.undo),
+                              tooltip: 'Returner materiale',
+                              onPressed: () => _returnMaterial(entry.key),
+                            ),
                         ],
                       ),
                       const SizedBox(height: 6),
@@ -428,6 +489,18 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
   }
 
   Future<void> _setExpectedHolding(String materialId) async {
+    if (!widget.canManageTeamMaterials) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Kun admin og materialforvalter kan sætte forventet beholdning.',
+          ),
+        ),
+      );
+      return;
+    }
+
     final currentExpected = _team.expectedHoldings[materialId];
     final currentActual = _team.holdings[materialId] ?? 0;
     final expectedCtrl = TextEditingController(
@@ -502,7 +575,20 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
   }
 
   Future<void> _assignMaterial() async {
+    if (!widget.canManageTeamMaterials) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Kun admin og materialforvalter kan tildele materialer.',
+          ),
+        ),
+      );
+      return;
+    }
+
     final qtyCtrl = TextEditingController(text: '1');
+    final expectedCtrl = TextEditingController();
     MaterialModel? selected;
     String? selectedCategory;
     String materialSearch = '';
@@ -510,6 +596,7 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
       context: context,
       builder: (context) {
         final dialogNavigator = Navigator.of(context);
+        final messenger = ScaffoldMessenger.of(context);
         return AlertDialog(
           title: const Text('Tildel materiale'),
           content: StatefulBuilder(
@@ -585,12 +672,31 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                         child: Text('$label (${m.totalInStock})'),
                       );
                     }).toList(),
-                    onChanged: (v) => setStateDialog(() => selected = v),
+                    onChanged: (v) => setStateDialog(() {
+                      selected = v;
+                      if (v == null) {
+                        expectedCtrl.clear();
+                        return;
+                      }
+                      final existingExpected = _team.expectedHoldings[v.id];
+                      expectedCtrl.text =
+                          (existingExpected ??
+                                  (int.tryParse(qtyCtrl.text) ?? 0))
+                              .toString();
+                    }),
                   ),
                   TextField(
                     controller: qtyCtrl,
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(labelText: 'Antal'),
+                  ),
+                  TextField(
+                    controller: expectedCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Forventet beholdning',
+                      helperText: 'Valgfri. Sættes sammen med tildelingen.',
+                    ),
                   ),
                 ],
               );
@@ -606,18 +712,60 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                 if (selectedCategory == null || selected == null) return;
                 final qty = int.tryParse(qtyCtrl.text) ?? 0;
                 if (qty <= 0) return;
-                await widget.service.assignToTeam(
-                  selected!.id,
-                  _team.id,
-                  qty,
-                  'local',
-                );
-                final updatedTeam = (await widget.service.listTeams())
-                    .firstWhere((t) => t.id == _team.id);
-                setState(() => _team = updatedTeam);
-                await _loadMaterials();
-                if (!mounted) return;
-                dialogNavigator.pop();
+                final expectedText = expectedCtrl.text.trim();
+                final expected = expectedText.isEmpty
+                    ? null
+                    : int.tryParse(expectedText);
+                if (expected != null && expected < 0) return;
+                if (expectedText.isNotEmpty && expected == null) return;
+
+                try {
+                  await widget.service.assignToTeam(
+                    selected!.id,
+                    _team.id,
+                    qty,
+                    'local',
+                  );
+                  var updatedTeam = (await widget.service.listTeams())
+                      .firstWhere((t) => t.id == _team.id);
+
+                  if (expected != null) {
+                    final newExpected = Map<String, int>.from(
+                      updatedTeam.expectedHoldings,
+                    )..[selected!.id] = expected;
+
+                    await widget.service.updateTeam(
+                      updatedTeam.copyWith(
+                        expectedHoldings: newExpected,
+                        updatedAt: DateTime.now(),
+                      ),
+                    );
+                    updatedTeam = (await widget.service.listTeams()).firstWhere(
+                      (t) => t.id == _team.id,
+                    );
+                  }
+
+                  if (!mounted) return;
+                  setState(() => _team = updatedTeam);
+                  await _loadMaterials();
+                  dialogNavigator.pop();
+                } on TimeoutException catch (_) {
+                  if (mounted) {
+                    messenger.showSnackBar(
+                      const SnackBar(
+                        content: Text('Tidsudløb ved tildeling af materiale'),
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text('Kunne ikke tildele materiale: $e'),
+                      ),
+                    );
+                  }
+                }
               },
               child: const Text('Tildel'),
             ),
@@ -628,6 +776,18 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
   }
 
   Future<void> _returnMaterial(String materialId) async {
+    if (!widget.canManageTeamMaterials) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Kun admin og materialforvalter kan flytte materialer.',
+          ),
+        ),
+      );
+      return;
+    }
+
     final qtyCtrl = TextEditingController(text: '1');
     await showDialog(
       context: context,
@@ -673,19 +833,21 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
   @override
   Widget build(BuildContext context) {
     final entries = _team.holdings.entries.toList();
-    final totalAssigned = entries.fold<int>(0, (sum, e) => sum + e.value);
-    final totalMissing = entries.fold<int>(0, (sum, e) {
+    final totalAssigned = entries.fold<int>(0, (total, e) => total + e.value);
+    final totalMissing = entries.fold<int>(0, (total, e) {
       final expected = _team.expectedHoldings[e.key];
-      if (expected == null) return sum;
-      return sum + (expected - e.value);
+      if (expected == null) return total;
+      return total + (expected - e.value);
     });
 
     return Scaffold(
       appBar: AppBar(title: Text('Hold: ${_team.name}')),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _assignMaterial,
-        child: const Icon(Icons.add),
-      ),
+      floatingActionButton: widget.canManageTeamMaterials
+          ? FloatingActionButton(
+              onPressed: _assignMaterial,
+              child: const Icon(Icons.add),
+            )
+          : null,
       body: _team.holdings.isEmpty
           ? const Center(child: Text('Ingen materialer tildelt endnu.'))
           : Column(
