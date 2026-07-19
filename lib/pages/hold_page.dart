@@ -598,6 +598,48 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
     return value.trim().isEmpty ? 'ikke sat' : value.trim();
   }
 
+  Color _kitStatusColor(String value) {
+    switch (value) {
+      case 'ok':
+        return Colors.green;
+      case 'mangler':
+        return Colors.red;
+      case 'skal udskiftes':
+        return Colors.orange;
+      default:
+        return Colors.blueGrey;
+    }
+  }
+
+  String _kitSetOverallStatus(TeamKitSetModel kitSet) {
+    final statuses = [
+      kitSet.jerseyStatus,
+      kitSet.shortsStatus,
+      kitSet.socksStatus,
+      kitSet.duffelbagStatus,
+    ];
+    if (statuses.any((status) => status == 'mangler')) {
+      return 'Mangler';
+    }
+    if (statuses.any((status) => status == 'skal udskiftes')) {
+      return 'Skal udskiftes';
+    }
+    return 'Komplet';
+  }
+
+  Map<String, int> _kitSetStats() {
+    final stats = <String, int>{
+      'Komplet': 0,
+      'Mangler': 0,
+      'Skal udskiftes': 0,
+    };
+    for (final kitSet in _team.kitSets) {
+      stats[_kitSetOverallStatus(kitSet)] =
+          (stats[_kitSetOverallStatus(kitSet)] ?? 0) + 1;
+    }
+    return stats;
+  }
+
   Future<void> _reloadTeam() async {
     final refreshed = (await widget.service.listTeams()).firstWhere(
       (team) => team.id == _team.id,
@@ -847,6 +889,8 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
   }
 
   Widget _buildKitSetsSection() {
+    final stats = _kitSetStats();
+
     return Card(
       margin: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       child: Padding(
@@ -875,6 +919,30 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
               'Hvert sæt indeholder trøje, shorts, strømper og duffelbag som separate dele.',
             ),
             const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                Chip(
+                  avatar: const Icon(Icons.check_circle, size: 18),
+                  label: Text('Komplet: ${stats['Komplet'] ?? 0}'),
+                  backgroundColor: Colors.green.shade50,
+                ),
+                Chip(
+                  avatar: const Icon(Icons.report_problem, size: 18),
+                  label: Text('Mangler: ${stats['Mangler'] ?? 0}'),
+                  backgroundColor: Colors.red.shade50,
+                ),
+                Chip(
+                  avatar: const Icon(Icons.refresh, size: 18),
+                  label: Text(
+                    'Skal udskiftes: ${stats['Skal udskiftes'] ?? 0}',
+                  ),
+                  backgroundColor: Colors.orange.shade50,
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
             if (_team.kitSets.isEmpty)
               const Text('Ingen sæt registreret endnu.')
             else
@@ -882,30 +950,33 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                 children: _team.kitSets.map((kitSet) {
                   return Card(
                     margin: const EdgeInsets.only(bottom: 8),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  'Sæt ${kitSet.setNumber}',
-                                  style: const TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                              if (widget.canManageTeamMaterials)
+                    child: ExpansionTile(
+                      tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+                      childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                      title: Text(
+                        'Sæt ${kitSet.setNumber}',
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      subtitle: Text(
+                        _kitSetOverallStatus(kitSet),
+                        style: TextStyle(
+                          color: _kitStatusColor(_kitSetOverallStatus(kitSet)),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      trailing: widget.canManageTeamMaterials
+                          ? Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
                                 IconButton(
                                   icon: const Icon(Icons.edit),
                                   tooltip: 'Redigér sæt',
                                   onPressed: () =>
                                       _showKitSetDialog(existing: kitSet),
                                 ),
-                              if (widget.canManageTeamMaterials)
                                 IconButton(
                                   icon: const Icon(
                                     Icons.delete,
@@ -914,40 +985,44 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                                   tooltip: 'Slet sæt',
                                   onPressed: () => _deleteKitSet(kitSet),
                                 ),
-                            ],
-                          ),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 6,
-                            children: [
-                              Chip(
-                                label: Text(
-                                  'Trøje: ${_kitSizeLabel(kitSet.jerseySize)} · ${_kitStatusLabel(kitSet.jerseyStatus)}',
-                                ),
+                              ],
+                            )
+                          : null,
+                      children: [
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 6,
+                          children: [
+                            Chip(
+                              label: Text(
+                                'Trøje: ${_kitSizeLabel(kitSet.jerseySize)} · ${_kitStatusLabel(kitSet.jerseyStatus)}',
                               ),
-                              Chip(
-                                label: Text(
-                                  'Shorts: ${_kitSizeLabel(kitSet.shortsSize)} · ${_kitStatusLabel(kitSet.shortsStatus)}',
-                                ),
+                            ),
+                            Chip(
+                              label: Text(
+                                'Shorts: ${_kitSizeLabel(kitSet.shortsSize)} · ${_kitStatusLabel(kitSet.shortsStatus)}',
                               ),
-                              Chip(
-                                label: Text(
-                                  'Strømper: ${_kitSizeLabel(kitSet.socksSize)} · ${_kitStatusLabel(kitSet.socksStatus)}',
-                                ),
+                            ),
+                            Chip(
+                              label: Text(
+                                'Strømper: ${_kitSizeLabel(kitSet.socksSize)} · ${_kitStatusLabel(kitSet.socksStatus)}',
                               ),
-                              Chip(
-                                label: Text(
-                                  'Duffelbag: ${_kitStatusLabel(kitSet.duffelbagStatus)}',
-                                ),
+                            ),
+                            Chip(
+                              label: Text(
+                                'Duffelbag: ${_kitStatusLabel(kitSet.duffelbagStatus)}',
                               ),
-                            ],
-                          ),
-                          if ((kitSet.note ?? '').trim().isNotEmpty) ...[
-                            const SizedBox(height: 6),
-                            Text('Note: ${kitSet.note!.trim()}'),
+                            ),
                           ],
+                        ),
+                        if ((kitSet.note ?? '').trim().isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text('Note: ${kitSet.note!.trim()}'),
+                          ),
                         ],
-                      ),
+                      ],
                     ),
                   );
                 }).toList(),
