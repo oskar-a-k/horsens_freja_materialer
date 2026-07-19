@@ -394,6 +394,84 @@ class _LagerPageState extends State<LagerPage> {
     );
   }
 
+  int _expectedCount(String materialId) {
+    var count = 0;
+    for (final team in _teams) {
+      count += team.expectedHoldings[materialId] ?? 0;
+    }
+    return count;
+  }
+
+  Future<void> _deleteMaterial(MaterialModel material) async {
+    final onLoan = _loanedCount(material.id);
+    final expected = _expectedCount(material.id);
+    final messenger = ScaffoldMessenger.of(context);
+
+    if (onLoan > 0 || expected > 0) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            'Varen kan ikke slettes endnu. Udlån: $onLoan · Forventet på hold: $expected',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final displayName = material.variant == null || material.variant!.isEmpty
+        ? material.name
+        : '${material.name} · ${material.variant}';
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        final dialogNavigator = Navigator.of(context);
+        return AlertDialog(
+          title: const Text('Slet vare'),
+          content: Text('Vil du slette "$displayName" fra lageret?'),
+          actions: [
+            TextButton(
+              onPressed: () => dialogNavigator.pop(false),
+              child: const Text('Annuller'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: () => dialogNavigator.pop(true),
+              child: const Text('Slet'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await _service
+          .deleteMaterial(material.id)
+          .timeout(const Duration(seconds: 8));
+      await _loadInventoryData();
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Varen er slettet.')),
+      );
+    } on TimeoutException catch (_) {
+      if (mounted) {
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text('Tidsudløb ved sletning (Firestore svarer ikke)'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('Kunne ikke slette vare: $e')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -450,8 +528,9 @@ class _LagerPageState extends State<LagerPage> {
       if (_selectedCategory != 'Alle' && catName != _selectedCategory) continue;
       final searchField = ('${m.name} ${m.variant ?? ''} ${m.category}')
           .toLowerCase();
-      if (_searchQuery.isNotEmpty && !searchField.contains(_searchQuery))
+      if (_searchQuery.isNotEmpty && !searchField.contains(_searchQuery)) {
         continue;
+      }
 
       final prod = m.name;
       grouped.putIfAbsent(catName, () => {});
@@ -490,7 +569,7 @@ class _LagerPageState extends State<LagerPage> {
               children: variants.map((v) {
                 final displayName = v.variant == null || v.variant!.isEmpty
                     ? prod
-                    : '${prod} · ${v.variant}';
+                    : '$prod · ${v.variant}';
                 final onLoan = _loanedCount(v.id);
                 final onStock = v.totalInStock;
                 final total = onStock + onLoan;
@@ -522,6 +601,11 @@ class _LagerPageState extends State<LagerPage> {
                         icon: const Icon(Icons.tune),
                         tooltip: 'Juster lager',
                         onPressed: () => _adjustStock(v),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline),
+                        tooltip: 'Slet vare',
+                        onPressed: () => _deleteMaterial(v),
                       ),
                     ],
                   ),

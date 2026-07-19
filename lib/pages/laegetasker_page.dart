@@ -355,6 +355,9 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
       teamLocked: _teamLocked,
       assignedTeams: _assignedTeams,
     );
+    final teamsWithMedicalBag = visibleTeams
+        .where((team) => team.needsMedicalBag)
+        .toList();
 
     return Scaffold(
       appBar: AppBar(title: const Text('Lægetasker')),
@@ -371,17 +374,17 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
             const SizedBox(height: 12),
             const SizedBox(height: 12),
             Expanded(
-              child: visibleTeams.isEmpty
+              child: teamsWithMedicalBag.isEmpty
                   ? const Center(
                       child: Text(
-                        'Ingen hold fundet. Hvis en træner kun skal se egne hold, tilknyt teams eller teamNames på brugeren i users-samlingen.',
+                        'Ingen hold er markeret med behov for lægetaske. Sæt det på holdet under Hold.',
                         textAlign: TextAlign.center,
                       ),
                     )
                   : ListView.builder(
-                      itemCount: visibleTeams.length,
+                      itemCount: teamsWithMedicalBag.length,
                       itemBuilder: (context, index) {
-                        final team = visibleTeams[index];
+                        final team = teamsWithMedicalBag[index];
                         return Card(
                           margin: const EdgeInsets.only(bottom: 12),
                           child: ExpansionTile(

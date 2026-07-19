@@ -1,6 +1,7 @@
 class TeamModel {
   final String id;
   final String name;
+  final bool needsMedicalBag;
   final String? coachId;
   final String? note;
   final Map<String, int> holdings;
@@ -11,6 +12,7 @@ class TeamModel {
   TeamModel({
     required this.id,
     required this.name,
+    this.needsMedicalBag = false,
     this.coachId,
     this.note,
     Map<String, int>? holdings,
@@ -23,6 +25,7 @@ class TeamModel {
   TeamModel copyWith({
     String? id,
     String? name,
+    bool? needsMedicalBag,
     String? coachId,
     String? note,
     Map<String, int>? holdings,
@@ -33,6 +36,7 @@ class TeamModel {
     return TeamModel(
       id: id ?? this.id,
       name: name ?? this.name,
+      needsMedicalBag: needsMedicalBag ?? this.needsMedicalBag,
       coachId: coachId ?? this.coachId,
       note: note ?? this.note,
       holdings: holdings ?? Map.from(this.holdings),
@@ -62,6 +66,7 @@ class TeamModel {
     return TeamModel(
       id: id,
       name: map['name'] as String? ?? '',
+      needsMedicalBag: map['needsMedicalBag'] as bool? ?? false,
       coachId: map['coachId'] as String?,
       note: map['note'] as String?,
       holdings: holdings,
@@ -78,6 +83,7 @@ class TeamModel {
   Map<String, dynamic> toMap() {
     return {
       'name': name,
+      'needsMedicalBag': needsMedicalBag,
       'coachId': coachId,
       'note': note,
       'holdings': holdings.map((k, v) => MapEntry(k, v)),

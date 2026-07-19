@@ -88,15 +88,30 @@ class _HoldPageState extends State<HoldPage> {
       context: context,
       builder: (context) {
         var loading = false;
+        var needsMedicalBag = false;
         return StatefulBuilder(
           builder: (context, setStateDialog) {
             final messenger = ScaffoldMessenger.of(context);
             final dialogNavigator = Navigator.of(context);
             return AlertDialog(
               title: const Text('Tilføj hold'),
-              content: TextField(
-                controller: nameCtrl,
-                decoration: const InputDecoration(labelText: 'Holdnavn'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameCtrl,
+                    decoration: const InputDecoration(labelText: 'Holdnavn'),
+                  ),
+                  const SizedBox(height: 8),
+                  SwitchListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    value: needsMedicalBag,
+                    title: const Text('Har behov for lægetaske'),
+                    onChanged: (value) =>
+                        setStateDialog(() => needsMedicalBag = value),
+                  ),
+                ],
               ),
               actions: [
                 TextButton(
@@ -115,6 +130,7 @@ class _HoldPageState extends State<HoldPage> {
                               id: DateTime.now().millisecondsSinceEpoch
                                   .toString(),
                               name: name,
+                              needsMedicalBag: needsMedicalBag,
                             );
                             await _service
                                 .createTeam(team)
@@ -167,30 +183,54 @@ class _HoldPageState extends State<HoldPage> {
     await showDialog(
       context: context,
       builder: (context) {
+        var needsMedicalBag = team.needsMedicalBag;
         final dialogNavigator = Navigator.of(context);
-        return AlertDialog(
-          title: const Text('Rediger hold'),
-          content: TextField(
-            controller: nameCtrl,
-            decoration: const InputDecoration(labelText: 'Holdnavn'),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Annuller'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                final name = nameCtrl.text.trim();
-                if (name.isEmpty) return;
-                await _service.updateTeam(team.copyWith(name: name));
-                await _loadAll();
-                if (!mounted) return;
-                dialogNavigator.pop();
-              },
-              child: const Text('Gem'),
-            ),
-          ],
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            return AlertDialog(
+              title: const Text('Rediger hold'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameCtrl,
+                    decoration: const InputDecoration(labelText: 'Holdnavn'),
+                  ),
+                  const SizedBox(height: 8),
+                  SwitchListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    value: needsMedicalBag,
+                    title: const Text('Har behov for lægetaske'),
+                    onChanged: (value) =>
+                        setStateDialog(() => needsMedicalBag = value),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Annuller'),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    final name = nameCtrl.text.trim();
+                    if (name.isEmpty) return;
+                    await _service.updateTeam(
+                      team.copyWith(
+                        name: name,
+                        needsMedicalBag: needsMedicalBag,
+                      ),
+                    );
+                    await _loadAll();
+                    if (!mounted) return;
+                    dialogNavigator.pop();
+                  },
+                  child: const Text('Gem'),
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -287,7 +327,8 @@ class _HoldPageState extends State<HoldPage> {
                         child: ListTile(
                           title: Text(team.name),
                           subtitle: Text(
-                            '${team.holdings.length} forskellige materialer',
+                            '${team.holdings.length} forskellige materialer · '
+                            '${team.needsMedicalBag ? 'Lægetaske: ja' : 'Lægetaske: nej'}',
                           ),
                           onTap: () => _openTeamDetail(team),
                           trailing: Row(
@@ -432,6 +473,13 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                               icon: const Icon(Icons.flag_outlined),
                               tooltip: 'Sæt forventet beholdning',
                               onPressed: () => _setExpectedHolding(entry.key),
+                            ),
+                          if (widget.canManageTeamMaterials)
+                            IconButton(
+                              icon: const Icon(Icons.swap_horiz),
+                              tooltip: 'Ret tildeling (skift vare)',
+                              onPressed: () =>
+                                  _replaceAssignedMaterial(entry.key),
                             ),
                           if (widget.canManageTeamMaterials)
                             IconButton(
@@ -823,6 +871,201 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                 dialogNavigator.pop();
               },
               child: const Text('Returner'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _replaceAssignedMaterial(String fromMaterialId) async {
+    if (!widget.canManageTeamMaterials) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Kun admin og materialforvalter kan rette tildelinger.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final currentHeld = _team.holdings[fromMaterialId] ?? 0;
+    if (currentHeld <= 0) return;
+
+    final qtyCtrl = TextEditingController(text: currentHeld.toString());
+    final fromMaterial = _materialForId(fromMaterialId);
+    final fromLabel = _materialLabel(fromMaterial);
+
+    MaterialModel? selected;
+    String? selectedCategory;
+    String materialSearch = '';
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        final dialogNavigator = Navigator.of(context);
+        final messenger = ScaffoldMessenger.of(context);
+
+        return AlertDialog(
+          title: const Text('Ret tildeling'),
+          content: StatefulBuilder(
+            builder: (context, setStateDialog) {
+              final categories =
+                  _materials
+                      .map(
+                        (m) =>
+                            m.category.trim().isEmpty ? 'Ukendt' : m.category,
+                      )
+                      .toSet()
+                      .toList()
+                    ..sort();
+
+              final filtered = _materials.where((m) {
+                if (m.id == fromMaterialId) return false;
+                final categoryName = m.category.trim().isEmpty
+                    ? 'Ukendt'
+                    : m.category;
+                if (selectedCategory == null ||
+                    categoryName != selectedCategory) {
+                  return false;
+                }
+                final label = ('${m.name} ${m.variant ?? ''}').toLowerCase();
+                return materialSearch.isEmpty || label.contains(materialSearch);
+              }).toList();
+
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Nuværende vare: $fromLabel'),
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: selectedCategory,
+                    hint: const Text('Vælg kategori for ny vare'),
+                    isExpanded: true,
+                    items: categories
+                        .map(
+                          (c) => DropdownMenuItem<String>(
+                            value: c,
+                            child: Text(c),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (v) => setStateDialog(() {
+                      selectedCategory = v;
+                      selected = null;
+                    }),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    enabled: selectedCategory != null,
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(Icons.search),
+                      hintText: 'Søg ny vare',
+                    ),
+                    onChanged: (v) => setStateDialog(
+                      () => materialSearch = v.trim().toLowerCase(),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButton<MaterialModel>(
+                    value: selected,
+                    hint: Text(
+                      selectedCategory == null
+                          ? 'Vælg først en kategori'
+                          : 'Vælg ny vare',
+                    ),
+                    isExpanded: true,
+                    items: filtered.map((m) {
+                      final label = (m.variant == null || m.variant!.isEmpty)
+                          ? m.name
+                          : '${m.name} · ${m.variant}';
+                      return DropdownMenuItem(
+                        value: m,
+                        child: Text('$label (${m.totalInStock})'),
+                      );
+                    }).toList(),
+                    onChanged: (v) => setStateDialog(() => selected = v),
+                  ),
+                  TextField(
+                    controller: qtyCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: 'Antal der skal flyttes',
+                      helperText: 'Maks: $currentHeld',
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => dialogNavigator.pop(),
+              child: const Text('Annuller'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                if (selectedCategory == null || selected == null) return;
+                final qty = int.tryParse(qtyCtrl.text.trim()) ?? 0;
+                if (qty <= 0 || qty > currentHeld) return;
+                if (selected!.totalInStock < qty) {
+                  messenger.showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Der er ikke nok på lager af den nye vare.',
+                      ),
+                    ),
+                  );
+                  return;
+                }
+
+                try {
+                  await widget.service.returnFromTeam(
+                    fromMaterialId,
+                    _team.id,
+                    qty,
+                    'local',
+                    note:
+                        'Ret tildeling: $fromLabel -> ${_materialLabel(selected!)}',
+                  );
+                  await widget.service.assignToTeam(
+                    selected!.id,
+                    _team.id,
+                    qty,
+                    'local',
+                    note:
+                        'Ret tildeling: $fromLabel -> ${_materialLabel(selected!)}',
+                  );
+
+                  final updatedTeam = (await widget.service.listTeams())
+                      .firstWhere((t) => t.id == _team.id);
+
+                  if (!mounted) return;
+                  setState(() => _team = updatedTeam);
+                  await _loadMaterials();
+                  dialogNavigator.pop();
+                } on TimeoutException catch (_) {
+                  if (mounted) {
+                    messenger.showSnackBar(
+                      const SnackBar(
+                        content: Text('Tidsudløb ved rettelse af tildeling'),
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    messenger.showSnackBar(
+                      SnackBar(content: Text('Kunne ikke rette tildeling: $e')),
+                    );
+                  }
+                }
+              },
+              child: const Text('Gem ændring'),
             ),
           ],
         );
