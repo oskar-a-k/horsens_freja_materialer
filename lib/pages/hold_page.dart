@@ -424,6 +424,11 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
   late final ShortageCaseService _shortageCaseService = ShortageCaseService(
     firestore: _firestore,
   );
+  static const List<String> _kitStatusOptions = [
+    'ok',
+    'mangler',
+    'skal udskiftes',
+  ];
   late TeamModel _team;
   List<MaterialModel> _materials = [];
   final Map<String, bool> _categoryExpanded = {};
@@ -574,6 +579,383 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
     }
 
     return widgets;
+  }
+
+  String _kitStatusLabel(String value) {
+    switch (value) {
+      case 'ok':
+        return 'Ok';
+      case 'mangler':
+        return 'Mangler';
+      case 'skal udskiftes':
+        return 'Skal udskiftes';
+      default:
+        return value;
+    }
+  }
+
+  String _kitSizeLabel(String value) {
+    return value.trim().isEmpty ? 'ikke sat' : value.trim();
+  }
+
+  Future<void> _reloadTeam() async {
+    final refreshed = (await widget.service.listTeams()).firstWhere(
+      (team) => team.id == _team.id,
+    );
+    if (!mounted) return;
+    setState(() => _team = refreshed);
+  }
+
+  Future<void> _saveKitSet(TeamKitSetModel kitSet) async {
+    final newKitSets = List<TeamKitSetModel>.from(_team.kitSets);
+    final existingIndex = newKitSets.indexWhere((item) => item.id == kitSet.id);
+    if (existingIndex >= 0) {
+      newKitSets[existingIndex] = kitSet;
+    } else {
+      newKitSets.add(kitSet);
+    }
+
+    await widget.service.updateTeam(
+      _team.copyWith(kitSets: newKitSets, updatedAt: DateTime.now()),
+    );
+    await _reloadTeam();
+  }
+
+  Future<void> _deleteKitSet(TeamKitSetModel kitSet) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        final dialogNavigator = Navigator.of(context);
+        return AlertDialog(
+          title: const Text('Slet sæt'),
+          content: Text('Vil du slette sæt ${kitSet.setNumber}?'),
+          actions: [
+            TextButton(
+              onPressed: () => dialogNavigator.pop(false),
+              child: const Text('Annuller'),
+            ),
+            ElevatedButton(
+              onPressed: () => dialogNavigator.pop(true),
+              child: const Text('Slet'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) return;
+    final newKitSets = _team.kitSets
+        .where((item) => item.id != kitSet.id)
+        .toList();
+    await widget.service.updateTeam(
+      _team.copyWith(kitSets: newKitSets, updatedAt: DateTime.now()),
+    );
+    await _reloadTeam();
+  }
+
+  Future<void> _showKitSetDialog({TeamKitSetModel? existing}) async {
+    final numberCtrl = TextEditingController(text: existing?.setNumber ?? '');
+    final jerseySizeCtrl = TextEditingController(
+      text: existing?.jerseySize ?? '',
+    );
+    final shortsSizeCtrl = TextEditingController(
+      text: existing?.shortsSize ?? '',
+    );
+    final socksSizeCtrl = TextEditingController(
+      text: existing?.socksSize ?? '',
+    );
+    final noteCtrl = TextEditingController(text: existing?.note ?? '');
+    String jerseyStatus = existing?.jerseyStatus ?? 'ok';
+    String shortsStatus = existing?.shortsStatus ?? 'ok';
+    String socksStatus = existing?.socksStatus ?? 'ok';
+    String duffelbagStatus = existing?.duffelbagStatus ?? 'ok';
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        final dialogNavigator = Navigator.of(context);
+        final messenger = ScaffoldMessenger.of(context);
+
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            return AlertDialog(
+              title: Text(existing == null ? 'Opret sæt' : 'Redigér sæt'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: numberCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Nummer på sættet / rygnummer',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: jerseySizeCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Trøje størrelse',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      initialValue: jerseyStatus,
+                      decoration: const InputDecoration(
+                        labelText: 'Trøje status',
+                      ),
+                      items: _kitStatusOptions
+                          .map(
+                            (value) => DropdownMenuItem<String>(
+                              value: value,
+                              child: Text(_kitStatusLabel(value)),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setStateDialog(() => jerseyStatus = value);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: shortsSizeCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Shorts størrelse',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      initialValue: shortsStatus,
+                      decoration: const InputDecoration(
+                        labelText: 'Shorts status',
+                      ),
+                      items: _kitStatusOptions
+                          .map(
+                            (value) => DropdownMenuItem<String>(
+                              value: value,
+                              child: Text(_kitStatusLabel(value)),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setStateDialog(() => shortsStatus = value);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: socksSizeCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Strømper størrelse',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      initialValue: socksStatus,
+                      decoration: const InputDecoration(
+                        labelText: 'Strømper status',
+                      ),
+                      items: _kitStatusOptions
+                          .map(
+                            (value) => DropdownMenuItem<String>(
+                              value: value,
+                              child: Text(_kitStatusLabel(value)),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setStateDialog(() => socksStatus = value);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      initialValue: duffelbagStatus,
+                      decoration: const InputDecoration(
+                        labelText: 'Duffelbag status',
+                      ),
+                      items: _kitStatusOptions
+                          .map(
+                            (value) => DropdownMenuItem<String>(
+                              value: value,
+                              child: Text(_kitStatusLabel(value)),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setStateDialog(() => duffelbagStatus = value);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: noteCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Note (valgfri)',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => dialogNavigator.pop(),
+                  child: const Text('Annuller'),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    final number = numberCtrl.text.trim();
+                    if (number.isEmpty) return;
+
+                    final now = DateTime.now();
+                    final kitSet = TeamKitSetModel(
+                      id: existing?.id ?? now.millisecondsSinceEpoch.toString(),
+                      setNumber: number,
+                      jerseySize: jerseySizeCtrl.text.trim(),
+                      jerseyStatus: jerseyStatus,
+                      shortsSize: shortsSizeCtrl.text.trim(),
+                      shortsStatus: shortsStatus,
+                      socksSize: socksSizeCtrl.text.trim(),
+                      socksStatus: socksStatus,
+                      duffelbagStatus: duffelbagStatus,
+                      note: noteCtrl.text.trim().isEmpty
+                          ? null
+                          : noteCtrl.text.trim(),
+                      createdAt: existing?.createdAt ?? now,
+                      updatedAt: now,
+                    );
+
+                    try {
+                      await _saveKitSet(kitSet);
+                      if (!mounted) return;
+                      dialogNavigator.pop();
+                    } catch (e) {
+                      if (!mounted) return;
+                      messenger.showSnackBar(
+                        SnackBar(content: Text('Kunne ikke gemme sæt: $e')),
+                      );
+                    }
+                  },
+                  child: const Text('Gem'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildKitSetsSection() {
+    return Card(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Udlåns spillertøj',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                  ),
+                ),
+                if (widget.canManageTeamMaterials)
+                  TextButton.icon(
+                    onPressed: () => _showKitSetDialog(),
+                    icon: const Icon(Icons.add),
+                    label: const Text('Tilføj sæt'),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Hvert sæt indeholder trøje, shorts, strømper og duffelbag som separate dele.',
+            ),
+            const SizedBox(height: 12),
+            if (_team.kitSets.isEmpty)
+              const Text('Ingen sæt registreret endnu.')
+            else
+              Column(
+                children: _team.kitSets.map((kitSet) {
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Sæt ${kitSet.setNumber}',
+                                  style: const TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                              if (widget.canManageTeamMaterials)
+                                IconButton(
+                                  icon: const Icon(Icons.edit),
+                                  tooltip: 'Redigér sæt',
+                                  onPressed: () =>
+                                      _showKitSetDialog(existing: kitSet),
+                                ),
+                              if (widget.canManageTeamMaterials)
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.delete,
+                                    color: Colors.red,
+                                  ),
+                                  tooltip: 'Slet sæt',
+                                  onPressed: () => _deleteKitSet(kitSet),
+                                ),
+                            ],
+                          ),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 6,
+                            children: [
+                              Chip(
+                                label: Text(
+                                  'Trøje: ${_kitSizeLabel(kitSet.jerseySize)} · ${_kitStatusLabel(kitSet.jerseyStatus)}',
+                                ),
+                              ),
+                              Chip(
+                                label: Text(
+                                  'Shorts: ${_kitSizeLabel(kitSet.shortsSize)} · ${_kitStatusLabel(kitSet.shortsStatus)}',
+                                ),
+                              ),
+                              Chip(
+                                label: Text(
+                                  'Strømper: ${_kitSizeLabel(kitSet.socksSize)} · ${_kitStatusLabel(kitSet.socksStatus)}',
+                                ),
+                              ),
+                              Chip(
+                                label: Text(
+                                  'Duffelbag: ${_kitStatusLabel(kitSet.duffelbagStatus)}',
+                                ),
+                              ),
+                            ],
+                          ),
+                          if ((kitSet.note ?? '').trim().isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            Text('Note: ${kitSet.note!.trim()}'),
+                          ],
+                        ],
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -1316,7 +1698,10 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                     padding: EdgeInsets.only(
                       bottom: MediaQuery.of(context).padding.bottom + 88,
                     ),
-                    children: _buildStructuredHoldings(entries),
+                    children: [
+                      ..._buildStructuredHoldings(entries),
+                      _buildKitSetsSection(),
+                    ],
                   ),
                 ),
               ],
