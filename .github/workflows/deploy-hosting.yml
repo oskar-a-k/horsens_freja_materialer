@@ -12,7 +12,16 @@ permissions:
   pull-requests: write
 
 jobs:
+  skip_if_missing_secret:
+    if: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_HORSENS_FREJA_MATERIALER == '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip deploy (missing Firebase service account secret)
+        run: |
+          echo "Skipping deploy: repository secret FIREBASE_SERVICE_ACCOUNT_HORSENS_FREJA_MATERIALER is not configured."
+
   build_and_deploy:
+    if: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_HORSENS_FREJA_MATERIALER != '' }}
     runs-on: ubuntu-latest
 
     steps:
