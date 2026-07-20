@@ -67,10 +67,9 @@ class _HoldPageState extends State<HoldPage> {
       final userData = userSnapshot.data();
 
       final isAdmin = userData?['isAdmin'] as bool? ?? false;
-      final role = (userData?['role'] as String? ?? '').trim().toLowerCase();
+      final role = (userData?['role'] as String? ?? '').toLowerCase();
       final canManage =
           hasOverrideAdmin || isAdmin || _materialManagerRoles.contains(role);
-
       final teamIds = List<String>.from(
         userData?['teams'] as List<dynamic>? ?? const <String>[],
       );
@@ -443,7 +442,14 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
   ];
   late TeamModel _team;
   List<MaterialModel> _materials = [];
+  Map<String, int> _latestReportedStatusByMaterial = {};
   final Map<String, bool> _categoryExpanded = {};
+
+  DateTime _statusCreatedAtValue(dynamic value) {
+    if (value is Timestamp) return value.toDate();
+    if (value is String) return DateTime.tryParse(value) ?? DateTime(1970);
+    return DateTime(1970);
+  }
 
   MaterialModel _materialForId(String id) {
     return _materials.firstWhere(
@@ -507,7 +513,8 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
             children: items.map((entry) {
               final material = _materialForId(entry.key);
               final label = _materialLabel(material);
-              final actual = entry.value;
+              final actual =
+                  _latestReportedStatusByMaterial[entry.key] ?? entry.value;
               final expected = _team.expectedHoldings[entry.key];
               final missing = expected == null ? null : (expected - actual);
 
@@ -677,6 +684,205 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
       _team.copyWith(kitSets: newKitSets, updatedAt: DateTime.now()),
     );
     await _reloadTeam();
+  }
+
+  Future<void> _saveKitSets(List<TeamKitSetModel> kitSets) async {
+    await widget.service.updateTeam(
+      _team.copyWith(kitSets: kitSets, updatedAt: DateTime.now()),
+    );
+    await _reloadTeam();
+  }
+
+  Future<void> _showBulkPartDialog({
+    required String partKey,
+    required String partLabel,
+  }) async {
+    final setNumbersCtrl = TextEditingController();
+    final sizeCtrl = TextEditingController();
+    final noteCtrl = TextEditingController();
+    String color = partKey == 'jersey'
+        ? 'hvid'
+        : partKey == 'shorts' || partKey == 'socks'
+        ? 'rød'
+        : '';
+    String status = 'ok';
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        final dialogNavigator = Navigator.of(context);
+        final messenger = ScaffoldMessenger.of(context);
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            return AlertDialog(
+              title: Text('Batch registrering: $partLabel'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: setNumbersCtrl,
+                      minLines: 3,
+                      maxLines: 6,
+                      decoration: const InputDecoration(
+                        labelText: 'Sæt-numre',
+                        hintText: 'Fx: 1,2,3 eller én pr linje',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      initialValue: color,
+                      decoration: InputDecoration(
+                        labelText: '$partLabel farve',
+                      ),
+                      items: _kitColorOptions
+                          .map(
+                            (value) => DropdownMenuItem<String>(
+                              value: value,
+                              child: Text(_kitColorLabel(value)),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setStateDialog(() => color = value);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: sizeCtrl,
+                      decoration: InputDecoration(
+                        labelText: '$partLabel størrelse',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      initialValue: status,
+                      decoration: InputDecoration(
+                        labelText: '$partLabel status',
+                      ),
+                      items: _kitStatusOptions
+                          .map(
+                            (value) => DropdownMenuItem<String>(
+                              value: value,
+                              child: Text(_kitStatusLabel(value)),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setStateDialog(() => status = value);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: noteCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Note (valgfri)',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => dialogNavigator.pop(),
+                  child: const Text('Annuller'),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    final raw = setNumbersCtrl.text;
+                    final setNumbers = raw
+                        .split(RegExp(r'[\n,;]+'))
+                        .map((s) => s.trim())
+                        .where((s) => s.isNotEmpty)
+                        .toSet()
+                        .toList();
+
+                    if (setNumbers.isEmpty) return;
+
+                    try {
+                      final now = DateTime.now();
+                      final byId = <String, TeamKitSetModel>{
+                        for (final set in _team.kitSets) set.id: set,
+                      };
+
+                      for (var i = 0; i < setNumbers.length; i++) {
+                        final setNumber = setNumbers[i];
+                        final existing = _team.kitSets.where((set) {
+                          return set.setNumber.trim().toLowerCase() ==
+                              setNumber.toLowerCase();
+                        }).firstOrNull;
+
+                        final base =
+                            existing ??
+                            TeamKitSetModel(
+                              id: '${now.millisecondsSinceEpoch}-$i',
+                              setNumber: setNumber,
+                              createdAt: now,
+                              updatedAt: now,
+                            );
+
+                        TeamKitSetModel updated;
+                        switch (partKey) {
+                          case 'jersey':
+                            updated = base.copyWith(
+                              jerseyColor: color,
+                              jerseySize: sizeCtrl.text.trim(),
+                              jerseyStatus: status,
+                              note: noteCtrl.text.trim().isEmpty
+                                  ? base.note
+                                  : noteCtrl.text.trim(),
+                              updatedAt: now,
+                            );
+                            break;
+                          case 'shorts':
+                            updated = base.copyWith(
+                              shortsColor: color,
+                              shortsSize: sizeCtrl.text.trim(),
+                              shortsStatus: status,
+                              note: noteCtrl.text.trim().isEmpty
+                                  ? base.note
+                                  : noteCtrl.text.trim(),
+                              updatedAt: now,
+                            );
+                            break;
+                          case 'socks':
+                            updated = base.copyWith(
+                              socksColor: color,
+                              socksSize: sizeCtrl.text.trim(),
+                              socksStatus: status,
+                              note: noteCtrl.text.trim().isEmpty
+                                  ? base.note
+                                  : noteCtrl.text.trim(),
+                              updatedAt: now,
+                            );
+                            break;
+                          default:
+                            updated = base;
+                        }
+
+                        byId[updated.id] = updated;
+                      }
+
+                      await _saveKitSets(byId.values.toList());
+                      if (!mounted) return;
+                      dialogNavigator.pop();
+                    } catch (e) {
+                      if (!mounted) return;
+                      messenger.showSnackBar(
+                        SnackBar(content: Text('Kunne ikke gemme batch: $e')),
+                      );
+                    }
+                  },
+                  child: const Text('Gem batch'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   Future<void> _deleteKitSet(TeamKitSetModel kitSet) async {
@@ -1006,18 +1212,45 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
                   ),
                 ),
-                if (widget.canManageTeamMaterials)
-                  TextButton.icon(
-                    onPressed: () => _showKitSetDialog(),
-                    icon: const Icon(Icons.add),
-                    label: const Text('Tilføj sæt'),
-                  ),
               ],
             ),
             const SizedBox(height: 4),
             const Text(
               'Hvert sæt indeholder trøje, shorts, strømper og duffelbag som separate dele.',
             ),
+            if (widget.canManageTeamMaterials) ...[
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () => _showBulkPartDialog(
+                      partKey: 'jersey',
+                      partLabel: 'Trøje',
+                    ),
+                    icon: const Icon(Icons.checkroom),
+                    label: const Text('Registrer trøjer'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => _showBulkPartDialog(
+                      partKey: 'shorts',
+                      partLabel: 'Shorts',
+                    ),
+                    icon: const Icon(Icons.style),
+                    label: const Text('Registrer shorts'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => _showBulkPartDialog(
+                      partKey: 'socks',
+                      partLabel: 'Strømper',
+                    ),
+                    icon: const Icon(Icons.dry_cleaning),
+                    label: const Text('Registrer strømper'),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 12),
             Wrap(
               spacing: 8,
@@ -1138,11 +1371,41 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
     super.initState();
     _team = widget.team;
     _loadMaterials();
+    _loadLatestReportedStatuses();
   }
 
   Future<void> _loadMaterials() async {
     final m = await widget.service.listMaterials();
     setState(() => _materials = m);
+  }
+
+  Future<void> _loadLatestReportedStatuses() async {
+    final snapshot = await _firestore
+        .collection('bag_status_reports')
+        .where('teamId', isEqualTo: _team.id)
+        .where('source', isEqualTo: 'hold_status')
+        .get();
+
+    final sortedDocs = [...snapshot.docs]
+      ..sort((a, b) {
+        final aDate = _statusCreatedAtValue(a.data()['createdAt']);
+        final bDate = _statusCreatedAtValue(b.data()['createdAt']);
+        return bDate.compareTo(aDate);
+      });
+
+    final latestByMaterial = <String, int>{};
+    for (final doc in sortedDocs) {
+      final data = doc.data();
+      final materialId = data['materialId'] as String?;
+      final reportedQty = (data['reportedQuantity'] as num?)?.toInt();
+      if (materialId == null || materialId.isEmpty || reportedQty == null) {
+        continue;
+      }
+      latestByMaterial.putIfAbsent(materialId, () => reportedQty);
+    }
+
+    if (!mounted) return;
+    setState(() => _latestReportedStatusByMaterial = latestByMaterial);
   }
 
   Future<void> _setExpectedHolding(String materialId) async {
@@ -1597,6 +1860,9 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                   }
 
                   if (!mounted) return;
+                  setState(() {
+                    _latestReportedStatusByMaterial[materialId] = reported;
+                  });
                   messenger.showSnackBar(
                     SnackBar(
                       content: Text(
@@ -1819,12 +2085,25 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    final entries = _team.holdings.entries.toList();
-    final totalAssigned = entries.fold<int>(0, (total, e) => total + e.value);
+    final materialKeys = <String>{
+      ..._team.holdings.keys,
+      ..._team.expectedHoldings.keys,
+      ..._latestReportedStatusByMaterial.keys,
+    };
+    final entries = materialKeys
+        .map(
+          (materialId) => MapEntry(materialId, _team.holdings[materialId] ?? 0),
+        )
+        .toList();
+    final totalAssigned = entries.fold<int>(0, (total, e) {
+      final actual = _latestReportedStatusByMaterial[e.key] ?? e.value;
+      return total + actual;
+    });
     final totalMissing = entries.fold<int>(0, (total, e) {
       final expected = _team.expectedHoldings[e.key];
       if (expected == null) return total;
-      return total + (expected - e.value);
+      final actual = _latestReportedStatusByMaterial[e.key] ?? e.value;
+      return total + (expected - actual);
     });
 
     return Scaffold(
@@ -1835,7 +2114,7 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
               child: const Icon(Icons.add),
             )
           : null,
-      body: _team.holdings.isEmpty
+      body: entries.isEmpty
           ? const Center(child: Text('Ingen materialer tildelt endnu.'))
           : Column(
               children: [
