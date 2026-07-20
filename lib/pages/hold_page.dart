@@ -442,14 +442,7 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
   ];
   late TeamModel _team;
   List<MaterialModel> _materials = [];
-  Map<String, int> _latestReportedStatusByMaterial = {};
   final Map<String, bool> _categoryExpanded = {};
-
-  DateTime _statusCreatedAtValue(dynamic value) {
-    if (value is Timestamp) return value.toDate();
-    if (value is String) return DateTime.tryParse(value) ?? DateTime(1970);
-    return DateTime(1970);
-  }
 
   MaterialModel _materialForId(String id) {
     return _materials.firstWhere(
@@ -513,10 +506,11 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
             children: items.map((entry) {
               final material = _materialForId(entry.key);
               final label = _materialLabel(material);
-              final actual =
-                  _latestReportedStatusByMaterial[entry.key] ?? entry.value;
-              final expected = _team.expectedHoldings[entry.key];
-              final missing = expected == null ? null : (expected - actual);
+              final actual = teamActualMaterialCount(_team, entry.key);
+              final expected = teamExpectedMaterialCount(_team, entry.key);
+              final missing = expected == null
+                  ? null
+                  : teamMissingMaterialCount(_team, entry.key);
 
               return Card(
                 margin: const EdgeInsets.fromLTRB(8, 4, 8, 8),
@@ -1371,41 +1365,11 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
     super.initState();
     _team = widget.team;
     _loadMaterials();
-    _loadLatestReportedStatuses();
   }
 
   Future<void> _loadMaterials() async {
     final m = await widget.service.listMaterials();
     setState(() => _materials = m);
-  }
-
-  Future<void> _loadLatestReportedStatuses() async {
-    final snapshot = await _firestore
-        .collection('bag_status_reports')
-        .where('teamId', isEqualTo: _team.id)
-        .where('source', isEqualTo: 'hold_status')
-        .get();
-
-    final sortedDocs = [...snapshot.docs]
-      ..sort((a, b) {
-        final aDate = _statusCreatedAtValue(a.data()['createdAt']);
-        final bDate = _statusCreatedAtValue(b.data()['createdAt']);
-        return bDate.compareTo(aDate);
-      });
-
-    final latestByMaterial = <String, int>{};
-    for (final doc in sortedDocs) {
-      final data = doc.data();
-      final materialId = data['materialId'] as String?;
-      final reportedQty = (data['reportedQuantity'] as num?)?.toInt();
-      if (materialId == null || materialId.isEmpty || reportedQty == null) {
-        continue;
-      }
-      latestByMaterial.putIfAbsent(materialId, () => reportedQty);
-    }
-
-    if (!mounted) return;
-    setState(() => _latestReportedStatusByMaterial = latestByMaterial);
   }
 
   Future<void> _setExpectedHolding(String materialId) async {
@@ -1421,8 +1385,8 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
       return;
     }
 
-    final currentExpected = _team.expectedHoldings[materialId];
-    final currentActual = _team.holdings[materialId] ?? 0;
+    final currentExpected = teamExpectedMaterialCount(_team, materialId);
+    final currentActual = teamActualMaterialCount(_team, materialId);
     final expectedCtrl = TextEditingController(
       text: (currentExpected ?? currentActual).toString(),
     );
@@ -1753,8 +1717,8 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
   Future<void> _reportMaterialStatus(String materialId) async {
     final material = _materialForId(materialId);
     final materialLabel = _materialLabel(material);
-    final currentStatus = _team.holdings[materialId] ?? 0;
-    final expected = _team.expectedHoldings[materialId];
+    final currentStatus = teamActualMaterialCount(_team, materialId);
+    final expected = teamExpectedMaterialCount(_team, materialId);
     final statusCtrl = TextEditingController(text: currentStatus.toString());
     final reasonCtrl = TextEditingController();
 
@@ -1859,10 +1823,6 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                     );
                   }
 
-                  if (!mounted) return;
-                  setState(() {
-                    _latestReportedStatusByMaterial[materialId] = reported;
-                  });
                   messenger.showSnackBar(
                     SnackBar(
                       content: Text(
@@ -1901,7 +1861,7 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
       return;
     }
 
-    final currentHeld = _team.holdings[fromMaterialId] ?? 0;
+    final currentHeld = teamActualMaterialCount(_team, fromMaterialId);
     if (currentHeld <= 0) return;
 
     final qtyCtrl = TextEditingController(text: currentHeld.toString());
@@ -2085,25 +2045,18 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    final materialKeys = <String>{
-      ..._team.holdings.keys,
-      ..._team.expectedHoldings.keys,
-      ..._latestReportedStatusByMaterial.keys,
-    };
+    final materialKeys = teamMaterialIds(_team).toSet();
     final entries = materialKeys
         .map(
-          (materialId) => MapEntry(materialId, _team.holdings[materialId] ?? 0),
+          (materialId) =>
+              MapEntry(materialId, teamActualMaterialCount(_team, materialId)),
         )
         .toList();
     final totalAssigned = entries.fold<int>(0, (total, e) {
-      final actual = _latestReportedStatusByMaterial[e.key] ?? e.value;
-      return total + actual;
+      return total + e.value;
     });
     final totalMissing = entries.fold<int>(0, (total, e) {
-      final expected = _team.expectedHoldings[e.key];
-      if (expected == null) return total;
-      final actual = _latestReportedStatusByMaterial[e.key] ?? e.value;
-      return total + (expected - actual);
+      return total + teamMissingMaterialCount(_team, e.key);
     });
 
     return Scaffold(

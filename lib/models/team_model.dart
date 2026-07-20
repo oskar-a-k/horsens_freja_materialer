@@ -234,3 +234,56 @@ class TeamModel {
     };
   }
 }
+
+Iterable<String> teamMaterialIds(TeamModel team) {
+  return {...team.holdings.keys, ...team.expectedHoldings.keys};
+}
+
+int teamActualMaterialCount(TeamModel team, String materialId) {
+  return team.holdings[materialId] ?? 0;
+}
+
+int? teamExpectedMaterialCount(TeamModel team, String materialId) {
+  return team.expectedHoldings[materialId];
+}
+
+int teamMissingMaterialCount(TeamModel team, String materialId) {
+  final expected = team.expectedHoldings[materialId];
+  if (expected == null) return 0;
+  final actual = team.holdings[materialId] ?? 0;
+  final missing = expected - actual;
+  return missing > 0 ? missing : 0;
+}
+
+Iterable<String> teamMaterialIdsFromMap(Map<String, dynamic> teamData) {
+  final holdings = teamData['holdings'] as Map<String, dynamic>? ?? {};
+  final expected = teamData['expectedHoldings'] as Map<String, dynamic>? ?? {};
+  return {...holdings.keys, ...expected.keys};
+}
+
+int teamActualMaterialCountFromMap(
+  Map<String, dynamic> teamData,
+  String materialId,
+) {
+  final holdings = teamData['holdings'] as Map<String, dynamic>? ?? {};
+  return (holdings[materialId] as num?)?.toInt() ?? 0;
+}
+
+int? teamExpectedMaterialCountFromMap(
+  Map<String, dynamic> teamData,
+  String materialId,
+) {
+  final expected = teamData['expectedHoldings'] as Map<String, dynamic>? ?? {};
+  return (expected[materialId] as num?)?.toInt();
+}
+
+int teamMissingMaterialCountFromMap(
+  Map<String, dynamic> teamData,
+  String materialId,
+) {
+  final expected = teamExpectedMaterialCountFromMap(teamData, materialId);
+  if (expected == null) return 0;
+  final actual = teamActualMaterialCountFromMap(teamData, materialId);
+  final missing = expected - actual;
+  return missing > 0 ? missing : 0;
+}

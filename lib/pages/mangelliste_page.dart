@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../models/team_model.dart';
 import '../services/shortage_case_logic.dart';
 import '../services/shortage_case_service.dart';
 
@@ -579,17 +580,16 @@ class _MangellistePageState extends State<MangellistePage> {
                   final teamData = teamDoc.data();
                   final teamId = teamDoc.id;
                   final teamName = teamData['name'] as String? ?? 'Ukendt hold';
-                  final holdingsRaw =
-                      teamData['holdings'] as Map<String, dynamic>? ?? {};
-                  final expectedRaw =
-                      teamData['expectedHoldings'] as Map<String, dynamic>? ??
-                      {};
-
-                  for (final entry in expectedRaw.entries) {
-                    final materialId = entry.key;
-                    final expected = (entry.value as num?)?.toInt() ?? 0;
-                    final actual =
-                        (holdingsRaw[materialId] as num?)?.toInt() ?? 0;
+                  for (final materialId in teamMaterialIdsFromMap(teamData)) {
+                    final expected = teamExpectedMaterialCountFromMap(
+                      teamData,
+                      materialId,
+                    );
+                    if (expected == null) continue;
+                    final actual = teamActualMaterialCountFromMap(
+                      teamData,
+                      materialId,
+                    );
                     final missing = ShortageCaseLogic.calculatedMissing(
                       expected: expected,
                       actual: actual,

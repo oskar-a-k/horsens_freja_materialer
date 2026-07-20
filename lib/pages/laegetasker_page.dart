@@ -489,13 +489,22 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
                                               material,
                                             );
                                             final actual =
-                                                team.holdings[materialId] ?? 0;
-                                            final expected = team
-                                                .expectedHoldings[materialId];
+                                                teamActualMaterialCount(
+                                                  team,
+                                                  materialId,
+                                                );
+                                            final expected =
+                                                teamExpectedMaterialCount(
+                                                  team,
+                                                  materialId,
+                                                );
                                             final expectedMissing =
                                                 expected == null
                                                 ? null
-                                                : expected - actual;
+                                                : teamMissingMaterialCount(
+                                                    team,
+                                                    materialId,
+                                                  );
                                             final hasActiveCase =
                                                 activeCaseByMaterial[materialId] ==
                                                 true;

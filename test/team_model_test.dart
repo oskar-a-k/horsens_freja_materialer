@@ -40,4 +40,27 @@ void main() {
     expect(decoded.kitSets.first.duffelbagStatus, 'ok');
     expect(decoded.kitSets.first.note, 'Eksempel');
   });
+
+  test('team material helpers use one consistent quantity source', () {
+    final team = TeamModel(
+      id: 'team-2',
+      name: 'Herre hold 3',
+      holdings: {'sportstape-wide': 1},
+      expectedHoldings: {'sportstape-wide': 1},
+    );
+
+    expect(teamActualMaterialCount(team, 'sportstape-wide'), 1);
+    expect(teamExpectedMaterialCount(team, 'sportstape-wide'), 1);
+    expect(teamMissingMaterialCount(team, 'sportstape-wide'), 0);
+
+    final downgraded = team.copyWith(holdings: {'sportstape-wide': 0});
+
+    expect(teamActualMaterialCount(downgraded, 'sportstape-wide'), 0);
+    expect(teamMissingMaterialCount(downgraded, 'sportstape-wide'), 1);
+
+    final raw = team.toMap();
+    expect(teamActualMaterialCountFromMap(raw, 'sportstape-wide'), 1);
+    expect(teamExpectedMaterialCountFromMap(raw, 'sportstape-wide'), 1);
+    expect(teamMissingMaterialCountFromMap(raw, 'sportstape-wide'), 0);
+  });
 }
