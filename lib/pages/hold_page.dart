@@ -486,6 +486,31 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
         : '${material.name} · ${material.variant}';
   }
 
+  bool _materialExists(String materialId) {
+    return _materials.any((m) => m.id == materialId);
+  }
+
+  Future<void> _removeUnknownMaterialEntry(String materialId) async {
+    if (!widget.canManageTeamMaterials) return;
+    final holdings = Map<String, int>.from(_team.holdings)..remove(materialId);
+    final expected = Map<String, int>.from(_team.expectedHoldings)
+      ..remove(materialId);
+
+    await widget.service.updateTeam(
+      _team.copyWith(
+        holdings: holdings,
+        expectedHoldings: expected,
+        updatedAt: DateTime.now(),
+      ),
+    );
+
+    final updatedTeam = (await widget.service.listTeams()).firstWhere(
+      (t) => t.id == _team.id,
+    );
+    if (!mounted) return;
+    setState(() => _team = updatedTeam);
+  }
+
   List<Widget> _buildStructuredHoldings(List<MapEntry<String, int>> entries) {
     final grouped = <String, List<MapEntry<String, int>>>{};
 
@@ -527,6 +552,7 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
             children: items.map((entry) {
               final material = _materialForId(entry.key);
               final label = _materialLabel(material);
+              final isUnknownMaterial = !_materialExists(entry.key);
               final actual = teamActualMaterialCount(_team, entry.key);
               final expected = teamExpectedMaterialCount(_team, entry.key);
               final missing = expected == null
@@ -563,8 +589,17 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                             IconButton(
                               icon: const Icon(Icons.edit),
                               tooltip: 'Redigér vare',
+                              onPressed: isUnknownMaterial
+                                  ? null
+                                  : () => _replaceAssignedMaterial(entry.key),
+                            ),
+                          if (widget.canManageTeamMaterials &&
+                              isUnknownMaterial)
+                            IconButton(
+                              icon: const Icon(Icons.delete_sweep),
+                              tooltip: 'Ryd ukendt vare',
                               onPressed: () =>
-                                  _assignMaterial(initialMaterialId: entry.key),
+                                  _removeUnknownMaterialEntry(entry.key),
                             ),
                           if (widget.canManageTeamMaterials)
                             IconButton(
@@ -574,16 +609,11 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                             ),
                           if (widget.canManageTeamMaterials)
                             IconButton(
-                              icon: const Icon(Icons.swap_horiz),
-                              tooltip: 'Ret tildeling (skift vare)',
-                              onPressed: () =>
-                                  _replaceAssignedMaterial(entry.key),
-                            ),
-                          if (widget.canManageTeamMaterials)
-                            IconButton(
                               icon: const Icon(Icons.undo),
                               tooltip: 'Returner materiale',
-                              onPressed: () => _returnMaterial(entry.key),
+                              onPressed: isUnknownMaterial
+                                  ? () => _removeUnknownMaterialEntry(entry.key)
+                                  : () => _returnMaterial(entry.key),
                             ),
                         ],
                       ),
@@ -1486,7 +1516,7 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
     );
   }
 
-  Future<void> _assignMaterial({String? initialMaterialId}) async {
+  Future<void> _assignMaterial() async {
     if (!widget.canManageTeamMaterials) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1505,36 +1535,13 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
     String? selectedCategory;
     String materialSearch = '';
 
-    if (initialMaterialId != null) {
-      MaterialModel? initialMaterial;
-      for (final material in _materials) {
-        if (material.id == initialMaterialId) {
-          initialMaterial = material;
-          break;
-        }
-      }
-      if (initialMaterial != null) {
-        selected = initialMaterial;
-        selectedCategory = initialMaterial.category.trim().isEmpty
-            ? 'Ukendt'
-            : initialMaterial.category;
-        final existingExpected = teamExpectedMaterialCount(
-          _team,
-          initialMaterial.id,
-        );
-        expectedCtrl.text = (existingExpected ?? qtyCtrl.text).toString();
-      }
-    }
-
     await showDialog(
       context: context,
       builder: (context) {
         final dialogNavigator = Navigator.of(context);
         final messenger = ScaffoldMessenger.of(context);
         return AlertDialog(
-          title: Text(
-            initialMaterialId == null ? 'Tildel materiale' : 'Redigér vare',
-          ),
+          title: const Text('Tildel materiale'),
           content: StatefulBuilder(
             builder: (context, setStateDialog) {
               final categories =
@@ -1545,19 +1552,28 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                       )
                       .toSet()
                       .toList()
-                    ..sort();
+                    ..sort(
+                      (a, b) => a.toLowerCase().compareTo(b.toLowerCase()),
+                    );
 
-              final filtered = _materials.where((m) {
-                final categoryName = m.category.trim().isEmpty
-                    ? 'Ukendt'
-                    : m.category;
-                if (selectedCategory == null ||
-                    categoryName != selectedCategory) {
-                  return false;
-                }
-                final label = ('${m.name} ${m.variant ?? ''}').toLowerCase();
-                return materialSearch.isEmpty || label.contains(materialSearch);
-              }).toList();
+              final filtered =
+                  _materials.where((m) {
+                    final categoryName = m.category.trim().isEmpty
+                        ? 'Ukendt'
+                        : m.category;
+                    if (selectedCategory == null ||
+                        categoryName != selectedCategory) {
+                      return false;
+                    }
+                    final label = ('${m.name} ${m.variant ?? ''}')
+                        .toLowerCase();
+                    return materialSearch.isEmpty ||
+                        label.contains(materialSearch);
+                  }).toList()..sort((a, b) {
+                    final aLabel = _materialLabel(a).toLowerCase();
+                    final bLabel = _materialLabel(b).toLowerCase();
+                    return aLabel.compareTo(bLabel);
+                  });
 
               return Column(
                 mainAxisSize: MainAxisSize.min,
@@ -1720,6 +1736,15 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
             'Kun admin og materialforvalter kan flytte materialer.',
           ),
         ),
+      );
+      return;
+    }
+
+    if (!_materialExists(materialId)) {
+      await _removeUnknownMaterialEntry(materialId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ukendt vare blev fjernet fra holdet.')),
       );
       return;
     }
@@ -1942,20 +1967,29 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                       )
                       .toSet()
                       .toList()
-                    ..sort();
+                    ..sort(
+                      (a, b) => a.toLowerCase().compareTo(b.toLowerCase()),
+                    );
 
-              final filtered = _materials.where((m) {
-                if (m.id == fromMaterialId) return false;
-                final categoryName = m.category.trim().isEmpty
-                    ? 'Ukendt'
-                    : m.category;
-                if (selectedCategory == null ||
-                    categoryName != selectedCategory) {
-                  return false;
-                }
-                final label = ('${m.name} ${m.variant ?? ''}').toLowerCase();
-                return materialSearch.isEmpty || label.contains(materialSearch);
-              }).toList();
+              final filtered =
+                  _materials.where((m) {
+                    if (m.id == fromMaterialId) return false;
+                    final categoryName = m.category.trim().isEmpty
+                        ? 'Ukendt'
+                        : m.category;
+                    if (selectedCategory == null ||
+                        categoryName != selectedCategory) {
+                      return false;
+                    }
+                    final label = ('${m.name} ${m.variant ?? ''}')
+                        .toLowerCase();
+                    return materialSearch.isEmpty ||
+                        label.contains(materialSearch);
+                  }).toList()..sort((a, b) {
+                    final aLabel = _materialLabel(a).toLowerCase();
+                    final bLabel = _materialLabel(b).toLowerCase();
+                    return aLabel.compareTo(bLabel);
+                  });
 
               return Column(
                 mainAxisSize: MainAxisSize.min,
@@ -2017,8 +2051,9 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                     controller: qtyCtrl,
                     keyboardType: TextInputType.number,
                     decoration: InputDecoration(
-                      labelText: 'Antal der skal flyttes',
-                      helperText: 'Maks: $currentHeld',
+                      labelText: 'Nyt antal på holdet (ny vare)',
+                      helperText:
+                          'Eksisterende vare ($fromLabel) fjernes helt fra holdet.',
                     ),
                   ),
                 ],
@@ -2034,26 +2069,17 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
               onPressed: () async {
                 if (selectedCategory == null || selected == null) return;
                 final qty = int.tryParse(qtyCtrl.text.trim()) ?? 0;
-                if (qty <= 0 || qty > currentHeld) return;
-                if (selected!.totalInStock < qty) {
-                  messenger.showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'Der er ikke nok på lager af den nye vare.',
-                      ),
-                    ),
-                  );
-                  return;
-                }
+                if (qty <= 0) return;
 
                 try {
+                  // Replace means old item should disappear from the team.
                   await widget.service.returnFromTeam(
                     fromMaterialId,
                     _team.id,
-                    qty,
+                    currentHeld,
                     'local',
                     note:
-                        'Ret tildeling: $fromLabel -> ${_materialLabel(selected!)}',
+                        'Skift vare: fjern $fromLabel ($currentHeld) og tilføj ${_materialLabel(selected!)} ($qty)',
                   );
                   await widget.service.assignToTeam(
                     selected!.id,
@@ -2061,7 +2087,7 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                     qty,
                     'local',
                     note:
-                        'Ret tildeling: $fromLabel -> ${_materialLabel(selected!)}',
+                        'Skift vare: fjern $fromLabel ($currentHeld) og tilføj ${_materialLabel(selected!)} ($qty)',
                   );
 
                   final updatedTeam = (await widget.service.listTeams())
