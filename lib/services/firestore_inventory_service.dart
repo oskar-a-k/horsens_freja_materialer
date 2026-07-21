@@ -149,13 +149,16 @@ class FirestoreInventoryService implements InventoryService {
 
       final newHoldings = Map<String, int>.from(team.holdings);
       final remaining = (newHoldings[materialId] ?? 0) - toReturn;
+      final newExpected = Map<String, int>.from(team.expectedHoldings);
       if (remaining <= 0) {
         newHoldings.remove(materialId);
+        newExpected.remove(materialId);
       } else {
         newHoldings[materialId] = remaining;
       }
       transaction.update(teamDoc, {
         'holdings': newHoldings,
+        'expectedHoldings': newExpected,
         'updatedAt': DateTime.now().toIso8601String(),
       });
 
@@ -214,8 +217,9 @@ class FirestoreInventoryService implements InventoryService {
     String? teamId,
   }) async {
     Query<Map<String, dynamic>> query = _transactionsRef;
-    if (materialId != null)
+    if (materialId != null) {
       query = query.where('materialId', isEqualTo: materialId);
+    }
     if (teamId != null) query = query.where('teamId', isEqualTo: teamId);
     final snapshot = await query.get();
     return snapshot.docs

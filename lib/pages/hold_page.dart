@@ -35,6 +35,27 @@ class _HoldPageState extends State<HoldPage> {
   String _teamSearch = '';
   bool _canManageTeamMaterials = false;
 
+  bool _canManageFromUserData(
+    Map<String, dynamic>? userData, {
+    required bool hasOverrideAdmin,
+  }) {
+    final isAdmin = userData?['isAdmin'] as bool? ?? false;
+    final role = (userData?['role'] as String? ?? '').trim().toLowerCase();
+    final permissions = List<String>.from(
+      userData?['permissions'] as List<dynamic>? ?? const <String>[],
+    ).map((p) => p.trim().toLowerCase()).toSet();
+
+    final hasManagerRole =
+        role == 'admin' || _materialManagerRoles.contains(role);
+    final hasManagerPermissions =
+        permissions.contains('lager') || permissions.contains('laegetasker');
+
+    return hasOverrideAdmin ||
+        isAdmin ||
+        hasManagerRole ||
+        hasManagerPermissions;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -66,10 +87,10 @@ class _HoldPageState extends State<HoldPage> {
           .get();
       final userData = userSnapshot.data();
 
-      final isAdmin = userData?['isAdmin'] as bool? ?? false;
-      final role = (userData?['role'] as String? ?? '').toLowerCase();
-      final canManage =
-          hasOverrideAdmin || isAdmin || _materialManagerRoles.contains(role);
+      final canManage = _canManageFromUserData(
+        userData,
+        hasOverrideAdmin: hasOverrideAdmin,
+      );
       final teamIds = List<String>.from(
         userData?['teams'] as List<dynamic>? ?? const <String>[],
       );
@@ -481,7 +502,7 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
 
     for (final category in categories) {
       final items = grouped[category]!;
-      final isExpanded = _categoryExpanded.putIfAbsent(category, () => true);
+      final isExpanded = _categoryExpanded.putIfAbsent(category, () => false);
       items.sort((a, b) {
         final aName = _materialLabel(_materialForId(a.key));
         final bName = _materialLabel(_materialForId(b.key));
@@ -538,6 +559,13 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                             tooltip: 'Indmeld status',
                             onPressed: () => _reportMaterialStatus(entry.key),
                           ),
+                          if (widget.canManageTeamMaterials)
+                            IconButton(
+                              icon: const Icon(Icons.edit),
+                              tooltip: 'Redigér vare',
+                              onPressed: () =>
+                                  _assignMaterial(initialMaterialId: entry.key),
+                            ),
                           if (widget.canManageTeamMaterials)
                             IconButton(
                               icon: const Icon(Icons.flag_outlined),
@@ -1458,7 +1486,7 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
     );
   }
 
-  Future<void> _assignMaterial() async {
+  Future<void> _assignMaterial({String? initialMaterialId}) async {
     if (!widget.canManageTeamMaterials) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1476,13 +1504,37 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
     MaterialModel? selected;
     String? selectedCategory;
     String materialSearch = '';
+
+    if (initialMaterialId != null) {
+      MaterialModel? initialMaterial;
+      for (final material in _materials) {
+        if (material.id == initialMaterialId) {
+          initialMaterial = material;
+          break;
+        }
+      }
+      if (initialMaterial != null) {
+        selected = initialMaterial;
+        selectedCategory = initialMaterial.category.trim().isEmpty
+            ? 'Ukendt'
+            : initialMaterial.category;
+        final existingExpected = teamExpectedMaterialCount(
+          _team,
+          initialMaterial.id,
+        );
+        expectedCtrl.text = (existingExpected ?? qtyCtrl.text).toString();
+      }
+    }
+
     await showDialog(
       context: context,
       builder: (context) {
         final dialogNavigator = Navigator.of(context);
         final messenger = ScaffoldMessenger.of(context);
         return AlertDialog(
-          title: const Text('Tildel materiale'),
+          title: Text(
+            initialMaterialId == null ? 'Tildel materiale' : 'Redigér vare',
+          ),
           content: StatefulBuilder(
             builder: (context, setStateDialog) {
               final categories =

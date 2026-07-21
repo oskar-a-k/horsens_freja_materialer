@@ -118,7 +118,7 @@ class InMemoryInventoryService implements InventoryService {
 
   String _nextTxId() {
     _txCounter += 1;
-    return DateTime.now().millisecondsSinceEpoch.toString() + '-$_txCounter';
+    return '${DateTime.now().millisecondsSinceEpoch}-$_txCounter';
   }
 
   @override
@@ -181,13 +181,18 @@ class InMemoryInventoryService implements InventoryService {
     _materials[materialId] = updatedMaterial;
 
     final newHoldings = Map<String, int>.from(team.holdings);
+    final newExpected = Map<String, int>.from(team.expectedHoldings);
     final remaining = (newHoldings[materialId] ?? 0) - toReturn;
     if (remaining <= 0) {
       newHoldings.remove(materialId);
+      newExpected.remove(materialId);
     } else {
       newHoldings[materialId] = remaining;
     }
-    final updatedTeam = team.copyWith(holdings: newHoldings);
+    final updatedTeam = team.copyWith(
+      holdings: newHoldings,
+      expectedHoldings: newExpected,
+    );
     _teams[teamId] = updatedTeam;
 
     final tx = TransactionModel(
@@ -241,8 +246,9 @@ class InMemoryInventoryService implements InventoryService {
   }) async {
     await _ensureInit();
     Iterable<TransactionModel> list = _transactions;
-    if (materialId != null)
+    if (materialId != null) {
       list = list.where((t) => t.materialId == materialId);
+    }
     if (teamId != null) list = list.where((t) => t.teamId == teamId);
     return list.toList();
   }
