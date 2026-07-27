@@ -43,7 +43,65 @@ class _MangellistePageState extends State<MangellistePage> {
     return '${d.year}-$mm-$dd';
   }
 
-  Future<void> _closeAsSelfRefilled(Iterable<String> docIds) async {
+  Future<void> _applySelfRefillToTeam({
+    required String teamId,
+    required String materialId,
+    required int quantityHint,
+  }) async {
+    if (teamId.trim().isEmpty || materialId.trim().isEmpty) {
+      throw StateError('Mangler holdId eller materialeId på mangelsagen.');
+    }
+
+    final teamRef = _firestore.collection('teams').doc(teamId);
+
+    await _firestore.runTransaction((transaction) async {
+      final teamSnapshot = await transaction.get(teamRef);
+      if (!teamSnapshot.exists) {
+        throw StateError('Holdet findes ikke længere.');
+      }
+
+      final teamData = teamSnapshot.data() ?? <String, dynamic>{};
+      final holdings = Map<String, dynamic>.from(
+        teamData['holdings'] as Map<String, dynamic>? ??
+            const <String, dynamic>{},
+      );
+      final expected = Map<String, dynamic>.from(
+        teamData['expectedHoldings'] as Map<String, dynamic>? ??
+            const <String, dynamic>{},
+      );
+
+      final currentActual = (holdings[materialId] as num?)?.toInt() ?? 0;
+      final expectedValue = (expected[materialId] as num?)?.toInt();
+
+      final target =
+          expectedValue ??
+          currentActual + (quantityHint > 0 ? quantityHint : 0);
+
+      if (target <= 0) {
+        holdings.remove(materialId);
+      } else {
+        holdings[materialId] = target;
+      }
+
+      transaction.update(teamRef, {
+        'holdings': holdings,
+        'updatedAt': DateTime.now().toIso8601String(),
+      });
+    });
+  }
+
+  Future<void> _closeAsSelfRefilled({
+    required Iterable<String> docIds,
+    required String teamId,
+    required String materialId,
+    required int quantityHint,
+  }) async {
+    await _applySelfRefillToTeam(
+      teamId: teamId,
+      materialId: materialId,
+      quantityHint: quantityHint,
+    );
+
     final user = FirebaseAuth.instance.currentUser;
     await _shortageCaseService.closeCases(
       docIds: docIds,
@@ -59,8 +117,17 @@ class _MangellistePageState extends State<MangellistePage> {
 
   Future<void> _closeAsDelivered({
     required Iterable<String> docIds,
+    required String teamId,
+    required String materialId,
+    required int quantityHint,
     required DateTime deliveredDate,
   }) async {
+    await _applySelfRefillToTeam(
+      teamId: teamId,
+      materialId: materialId,
+      quantityHint: quantityHint,
+    );
+
     final user = FirebaseAuth.instance.currentUser;
     final dateOnly = DateTime(
       deliveredDate.year,
@@ -81,7 +148,12 @@ class _MangellistePageState extends State<MangellistePage> {
     );
   }
 
-  Future<void> _showDeliveredDialog(Iterable<String> docIds) async {
+  Future<void> _showDeliveredDialog(
+    Iterable<String> docIds, {
+    required String teamId,
+    required String materialId,
+    required int quantityHint,
+  }) async {
     final now = DateTime.now();
     final selected = await showDatePicker(
       context: context,
@@ -92,11 +164,30 @@ class _MangellistePageState extends State<MangellistePage> {
     );
     if (selected == null) return;
 
-    await _closeAsDelivered(docIds: docIds, deliveredDate: selected);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Mangel lukket: Vare udleveret.')),
-    );
+    try {
+      await _closeAsDelivered(
+        docIds: docIds,
+        teamId: teamId,
+        materialId: materialId,
+        quantityHint: quantityHint,
+        deliveredDate: selected,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Mangel lukket: Vare udleveret. Beholdning opdateret.'),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Kunne ikke opdatere beholdning/lukke sag ved udlevering: $e',
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _closeAsResolvedByStatus(Iterable<String> docIds) async {
@@ -310,18 +401,45 @@ class _MangellistePageState extends State<MangellistePage> {
                 OutlinedButton(
                   onPressed: () async {
                     final messenger = ScaffoldMessenger.of(context);
-                    await _closeAsSelfRefilled(openCase.docIds);
-                    if (!mounted) return;
-                    messenger.showSnackBar(
-                      const SnackBar(
-                        content: Text('Mangel lukket: Fyldt på taske selv.'),
-                      ),
-                    );
+                    try {
+                      await _closeAsSelfRefilled(
+                        docIds: openCase.docIds,
+                        teamId: openCase.teamId,
+                        materialId: openCase.materialId,
+                        quantityHint: openCase.currentMissing > 0
+                            ? openCase.currentMissing
+                            : openCase.reportedQuantity,
+                      );
+                      if (!mounted) return;
+                      messenger.showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Mangel lukket: Fyldt på taske selv. Beholdning opdateret.',
+                          ),
+                        ),
+                      );
+                    } catch (e) {
+                      if (!mounted) return;
+                      messenger.showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Kunne ikke opdatere beholdning/lukke sag: $e',
+                          ),
+                        ),
+                      );
+                    }
                   },
                   child: const Text('Fyldt på taske selv'),
                 ),
                 ElevatedButton(
-                  onPressed: () => _showDeliveredDialog(openCase.docIds),
+                  onPressed: () => _showDeliveredDialog(
+                    openCase.docIds,
+                    teamId: openCase.teamId,
+                    materialId: openCase.materialId,
+                    quantityHint: openCase.currentMissing > 0
+                        ? openCase.currentMissing
+                        : openCase.reportedQuantity,
+                  ),
                   child: const Text('Vare udleveret'),
                 ),
               ],
@@ -745,8 +863,10 @@ class _MangellistePageState extends State<MangellistePage> {
             final doc = docs[index];
             final data = doc.data();
             final teamName = data['teamName'] as String? ?? 'Ukendt hold';
+            final teamId = data['teamId'] as String? ?? '';
             final materialName =
                 data['materialName'] as String? ?? 'Ukendt vare';
+            final materialId = data['materialId'] as String? ?? '';
             final qty = (data['quantity'] as num?)?.toInt() ?? 0;
             final note = (data['note'] as String? ?? '').trim();
             final reporter = data['reportedByEmail'] as String? ?? 'ukendt';
@@ -802,20 +922,53 @@ class _MangellistePageState extends State<MangellistePage> {
                           OutlinedButton(
                             onPressed: () async {
                               final messenger = ScaffoldMessenger.of(context);
-                              await _closeAsSelfRefilled([doc.id]);
-                              if (!mounted) return;
-                              messenger.showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'Mangel lukket: Fyldt på taske selv.',
+                              if (teamId.isEmpty || materialId.isEmpty) {
+                                messenger.showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'Kan ikke lukke sagen: mangler hold/materiale reference.',
+                                    ),
                                   ),
-                                ),
-                              );
+                                );
+                                return;
+                              }
+                              try {
+                                await _closeAsSelfRefilled(
+                                  docIds: [doc.id],
+                                  teamId: teamId,
+                                  materialId: materialId,
+                                  quantityHint: qty,
+                                );
+                                if (!mounted) return;
+                                messenger.showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'Mangel lukket: Fyldt på taske selv. Beholdning opdateret.',
+                                    ),
+                                  ),
+                                );
+                              } catch (e) {
+                                if (!mounted) return;
+                                messenger.showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      'Kunne ikke opdatere beholdning/lukke sag: $e',
+                                    ),
+                                  ),
+                                );
+                              }
                             },
                             child: const Text('Fyldt på taske selv'),
                           ),
                           ElevatedButton(
-                            onPressed: () => _showDeliveredDialog([doc.id]),
+                            onPressed: teamId.isEmpty || materialId.isEmpty
+                                ? null
+                                : () => _showDeliveredDialog(
+                                    [doc.id],
+                                    teamId: teamId,
+                                    materialId: materialId,
+                                    quantityHint: qty,
+                                  ),
                             child: const Text('Vare udleveret'),
                           ),
                         ],

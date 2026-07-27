@@ -50,6 +50,66 @@ class _LagerPageState extends State<LagerPage> {
     return count;
   }
 
+  List<MapEntry<TeamModel, int>> _teamsWithMaterial(String materialId) {
+    final result = <MapEntry<TeamModel, int>>[];
+    for (final team in _teams) {
+      final qty = team.holdings[materialId] ?? 0;
+      if (qty > 0) {
+        result.add(MapEntry(team, qty));
+      }
+    }
+    result.sort(
+      (a, b) => a.key.name.toLowerCase().compareTo(b.key.name.toLowerCase()),
+    );
+    return result;
+  }
+
+  Future<void> _showTeamsForMaterial(MaterialModel material) async {
+    final entries = _teamsWithMaterial(material.id);
+    final displayName = material.variant == null || material.variant!.isEmpty
+        ? material.name
+        : '${material.name} · ${material.variant}';
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        final dialogNavigator = Navigator.of(context);
+        return AlertDialog(
+          title: Text('Udleveret til hold\n$displayName'),
+          content: SizedBox(
+            width: 420,
+            child: entries.isEmpty
+                ? const Text('Ingen hold har denne vare udleveret lige nu.')
+                : ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: entries.length,
+                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final team = entries[index].key;
+                      final qty = entries[index].value;
+                      return ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(team.name),
+                        trailing: Text(
+                          '$qty ${material.unit}',
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => dialogNavigator.pop(),
+              child: const Text('Luk'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   List<String> _categoryOptions() {
     final categories =
         _materials
@@ -592,6 +652,11 @@ class _LagerPageState extends State<LagerPage> {
                       ),
                       const SizedBox(width: 8),
                       if (isLow) const Icon(Icons.warning, color: Colors.red),
+                      IconButton(
+                        icon: const Icon(Icons.groups_2_outlined),
+                        tooltip: 'Vis hold med udleveret vare',
+                        onPressed: () => _showTeamsForMaterial(v),
+                      ),
                       IconButton(
                         icon: const Icon(Icons.edit_note),
                         tooltip: 'Redigér vare',

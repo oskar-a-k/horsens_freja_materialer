@@ -41,19 +41,15 @@ class _HoldPageState extends State<HoldPage> {
   }) {
     final isAdmin = userData?['isAdmin'] as bool? ?? false;
     final role = (userData?['role'] as String? ?? '').trim().toLowerCase();
-    final permissions = List<String>.from(
-      userData?['permissions'] as List<dynamic>? ?? const <String>[],
-    ).map((p) => p.trim().toLowerCase()).toSet();
+
+    final isCoachRole =
+        role == 'coach' || role == 'traener' || role == 'træner';
+    if (isCoachRole) return false;
 
     final hasManagerRole =
         role == 'admin' || _materialManagerRoles.contains(role);
-    final hasManagerPermissions =
-        permissions.contains('lager') || permissions.contains('laegetasker');
 
-    return hasOverrideAdmin ||
-        isAdmin ||
-        hasManagerRole ||
-        hasManagerPermissions;
+    return hasOverrideAdmin || isAdmin || hasManagerRole;
   }
 
   @override
@@ -126,10 +122,9 @@ class _HoldPageState extends State<HoldPage> {
         }
       }
 
-      final teamLocked = !canManage && assignedTeamIds.isNotEmpty;
-      final visibleTeams = teamLocked
-          ? teams.where((team) => assignedTeamIds.contains(team.id)).toList()
-          : teams;
+      final visibleTeams = canManage
+          ? teams
+          : teams.where((team) => assignedTeamIds.contains(team.id)).toList();
 
       if (!mounted) return;
       setState(() {
@@ -490,6 +485,202 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
     return _materials.any((m) => m.id == materialId);
   }
 
+  Future<void> _setActualHolding(String materialId) async {
+    if (!widget.canManageTeamMaterials) return;
+    if (!_materialExists(materialId)) {
+      await _removeUnknownMaterialEntry(materialId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ukendt vare blev fjernet fra holdet.')),
+      );
+      return;
+    }
+
+    final current = teamActualMaterialCount(_team, materialId);
+    final currentExpected = teamExpectedMaterialCount(_team, materialId);
+    final qtyCtrl = TextEditingController(text: current.toString());
+    final expectedCtrl = TextEditingController(
+      text: currentExpected?.toString() ?? '',
+    );
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        final dialogNavigator = Navigator.of(context);
+        final messenger = ScaffoldMessenger.of(context);
+        return AlertDialog(
+          title: const Text('Juster beholdning på holdet'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: qtyCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Nyt antal på holdet',
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: expectedCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Forventet beholdning',
+                  helperText: 'Tom = ikke sat',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => dialogNavigator.pop(),
+              child: const Text('Annuller'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final target = int.tryParse(qtyCtrl.text.trim());
+                if (target == null || target < 0) return;
+                final expectedText = expectedCtrl.text.trim();
+                final expectedTarget = expectedText.isEmpty
+                    ? null
+                    : int.tryParse(expectedText);
+                if (expectedTarget != null && expectedTarget < 0) return;
+                if (expectedText.isNotEmpty && expectedTarget == null) return;
+
+                final expectedChanged = expectedTarget != currentExpected;
+                if (target == current && !expectedChanged) {
+                  dialogNavigator.pop();
+                  return;
+                }
+
+                try {
+                  if (target > current) {
+                    await widget.service.assignToTeam(
+                      materialId,
+                      _team.id,
+                      target - current,
+                      'local',
+                      note: 'Juster beholdning på hold',
+                    );
+                  } else {
+                    await widget.service.returnFromTeam(
+                      materialId,
+                      _team.id,
+                      current - target,
+                      'local',
+                      note: 'Juster beholdning på hold',
+                    );
+                  }
+
+                  var updatedTeam = (await widget.service.listTeams())
+                      .firstWhere((t) => t.id == _team.id);
+
+                  if (expectedChanged) {
+                    final newExpected = Map<String, int>.from(
+                      updatedTeam.expectedHoldings,
+                    );
+                    if (expectedTarget == null) {
+                      newExpected.remove(materialId);
+                    } else {
+                      newExpected[materialId] = expectedTarget;
+                    }
+
+                    await widget.service.updateTeam(
+                      updatedTeam.copyWith(
+                        expectedHoldings: newExpected,
+                        updatedAt: DateTime.now(),
+                      ),
+                    );
+                    updatedTeam = (await widget.service.listTeams()).firstWhere(
+                      (t) => t.id == _team.id,
+                    );
+                  }
+
+                  if (!mounted) return;
+                  setState(() => _team = updatedTeam);
+                  await _loadMaterials();
+                  dialogNavigator.pop();
+                } catch (e) {
+                  if (!mounted) return;
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text('Kunne ikke justere beholdning: $e'),
+                    ),
+                  );
+                }
+              },
+              child: const Text('Gem'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _removeMaterialCompletely(String materialId) async {
+    if (!widget.canManageTeamMaterials) return;
+
+    final label = _materialLabel(_materialForId(materialId));
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        final dialogNavigator = Navigator.of(context);
+        return AlertDialog(
+          title: const Text('Fjern materiale fra hold'),
+          content: Text('Vil du fjerne "$label" helt fra holdet?'),
+          actions: [
+            TextButton(
+              onPressed: () => dialogNavigator.pop(false),
+              child: const Text('Annuller'),
+            ),
+            ElevatedButton(
+              onPressed: () => dialogNavigator.pop(true),
+              child: const Text('Fjern'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) return;
+
+    if (!_materialExists(materialId)) {
+      await _removeUnknownMaterialEntry(materialId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ukendt vare blev fjernet fra holdet.')),
+      );
+      return;
+    }
+
+    final currentHeld = teamActualMaterialCount(_team, materialId);
+    if (currentHeld <= 0) {
+      await _removeUnknownMaterialEntry(materialId);
+      return;
+    }
+
+    try {
+      await widget.service.returnFromTeam(
+        materialId,
+        _team.id,
+        currentHeld,
+        'local',
+        note: 'Fjern materiale helt fra hold',
+      );
+      final updatedTeam = (await widget.service.listTeams()).firstWhere(
+        (t) => t.id == _team.id,
+      );
+      if (!mounted) return;
+      setState(() => _team = updatedTeam);
+      await _loadMaterials();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Kunne ikke fjerne materiale: $e')),
+      );
+    }
+  }
+
   Future<void> _removeUnknownMaterialEntry(String materialId) async {
     if (!widget.canManageTeamMaterials) return;
     final holdings = Map<String, int>.from(_team.holdings)..remove(materialId);
@@ -580,40 +771,69 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                               ),
                             ),
                           ),
-                          IconButton(
-                            icon: const Icon(Icons.assignment_turned_in),
-                            tooltip: 'Indmeld status',
+                          TextButton.icon(
                             onPressed: () => _reportMaterialStatus(entry.key),
+                            icon: const Icon(Icons.assignment_turned_in),
+                            label: const Text('Indberet beholdning'),
                           ),
                           if (widget.canManageTeamMaterials)
-                            IconButton(
-                              icon: const Icon(Icons.edit),
-                              tooltip: 'Redigér vare',
-                              onPressed: isUnknownMaterial
-                                  ? null
-                                  : () => _replaceAssignedMaterial(entry.key),
-                            ),
-                          if (widget.canManageTeamMaterials &&
-                              isUnknownMaterial)
-                            IconButton(
-                              icon: const Icon(Icons.delete_sweep),
-                              tooltip: 'Ryd ukendt vare',
-                              onPressed: () =>
-                                  _removeUnknownMaterialEntry(entry.key),
-                            ),
-                          if (widget.canManageTeamMaterials)
-                            IconButton(
-                              icon: const Icon(Icons.flag_outlined),
-                              tooltip: 'Sæt forventet beholdning',
-                              onPressed: () => _setExpectedHolding(entry.key),
-                            ),
-                          if (widget.canManageTeamMaterials)
-                            IconButton(
-                              icon: const Icon(Icons.undo),
-                              tooltip: 'Returner materiale',
-                              onPressed: isUnknownMaterial
-                                  ? () => _removeUnknownMaterialEntry(entry.key)
-                                  : () => _returnMaterial(entry.key),
+                            PopupMenuButton<String>(
+                              tooltip: 'Administrer materiale',
+                              onSelected: (value) async {
+                                switch (value) {
+                                  case 'replace':
+                                    if (!isUnknownMaterial) {
+                                      await _replaceAssignedMaterial(entry.key);
+                                    }
+                                    break;
+                                  case 'actual':
+                                    await _setActualHolding(entry.key);
+                                    break;
+                                  case 'remove':
+                                    await _removeMaterialCompletely(entry.key);
+                                    break;
+                                }
+                              },
+                              itemBuilder: (context) {
+                                final items = <PopupMenuEntry<String>>[];
+                                if (!isUnknownMaterial) {
+                                  items.add(
+                                    const PopupMenuItem<String>(
+                                      value: 'replace',
+                                      child: Text('Skift materiale'),
+                                    ),
+                                  );
+                                }
+                                items.addAll([
+                                  const PopupMenuItem<String>(
+                                    value: 'actual',
+                                    child: Text('Juster beholdning'),
+                                  ),
+                                  PopupMenuItem<String>(
+                                    value: 'remove',
+                                    child: Text(
+                                      isUnknownMaterial
+                                          ? 'Ryd ukendt vare'
+                                          : 'Fjern fra hold',
+                                    ),
+                                  ),
+                                ]);
+                                return items;
+                              },
+                              child: const Padding(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 6,
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.settings),
+                                    SizedBox(width: 4),
+                                    Text('Administrer'),
+                                  ],
+                                ),
+                              ),
                             ),
                         ],
                       ),
@@ -1430,92 +1650,6 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
     setState(() => _materials = m);
   }
 
-  Future<void> _setExpectedHolding(String materialId) async {
-    if (!widget.canManageTeamMaterials) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Kun admin og materialforvalter kan sætte forventet beholdning.',
-          ),
-        ),
-      );
-      return;
-    }
-
-    final currentExpected = teamExpectedMaterialCount(_team, materialId);
-    final currentActual = teamActualMaterialCount(_team, materialId);
-    final expectedCtrl = TextEditingController(
-      text: (currentExpected ?? currentActual).toString(),
-    );
-
-    await showDialog(
-      context: context,
-      builder: (context) {
-        final dialogNavigator = Navigator.of(context);
-        final messenger = ScaffoldMessenger.of(context);
-        return AlertDialog(
-          title: const Text('Forventet beholdning'),
-          content: TextField(
-            controller: expectedCtrl,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'Forventet antal'),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => dialogNavigator.pop(),
-              child: const Text('Annuller'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                final expected = int.tryParse(expectedCtrl.text.trim());
-                if (expected == null || expected < 0) return;
-
-                final newExpected = Map<String, int>.from(
-                  _team.expectedHoldings,
-                )..[materialId] = expected;
-
-                try {
-                  final updatedTeam = _team.copyWith(
-                    expectedHoldings: newExpected,
-                    updatedAt: DateTime.now(),
-                  );
-                  await widget.service
-                      .updateTeam(updatedTeam)
-                      .timeout(const Duration(seconds: 8));
-                  final refreshed = (await widget.service.listTeams())
-                      .firstWhere((t) => t.id == _team.id);
-                  if (!mounted) return;
-                  setState(() => _team = refreshed);
-                  dialogNavigator.pop();
-                } on TimeoutException catch (_) {
-                  if (mounted) {
-                    messenger.showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'Tidsudløb ved gem af forventet beholdning',
-                        ),
-                      ),
-                    );
-                  }
-                } catch (e) {
-                  if (mounted) {
-                    messenger.showSnackBar(
-                      SnackBar(
-                        content: Text('Kunne ikke gemme forventet antal: $e'),
-                      ),
-                    );
-                  }
-                }
-              },
-              child: const Text('Gem'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   Future<void> _assignMaterial() async {
     if (!widget.canManageTeamMaterials) {
       if (!mounted) return;
@@ -1727,70 +1861,6 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
     );
   }
 
-  Future<void> _returnMaterial(String materialId) async {
-    if (!widget.canManageTeamMaterials) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Kun admin og materialforvalter kan flytte materialer.',
-          ),
-        ),
-      );
-      return;
-    }
-
-    if (!_materialExists(materialId)) {
-      await _removeUnknownMaterialEntry(materialId);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ukendt vare blev fjernet fra holdet.')),
-      );
-      return;
-    }
-
-    final qtyCtrl = TextEditingController(text: '1');
-    await showDialog(
-      context: context,
-      builder: (context) {
-        final dialogNavigator = Navigator.of(context);
-        return AlertDialog(
-          title: const Text('Returner materiale'),
-          content: TextField(
-            controller: qtyCtrl,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'Antal'),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => dialogNavigator.pop(),
-              child: const Text('Annuller'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                final qty = int.tryParse(qtyCtrl.text) ?? 0;
-                if (qty <= 0) return;
-                await widget.service.returnFromTeam(
-                  materialId,
-                  _team.id,
-                  qty,
-                  'local',
-                );
-                final updatedTeam = (await widget.service.listTeams())
-                    .firstWhere((t) => t.id == _team.id);
-                setState(() => _team = updatedTeam);
-                await _loadMaterials();
-                if (!mounted) return;
-                dialogNavigator.pop();
-              },
-              child: const Text('Returner'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   Future<void> _reportMaterialStatus(String materialId) async {
     final material = _materialForId(materialId);
     final materialLabel = _materialLabel(material);
@@ -1900,14 +1970,38 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                     );
                   }
 
-                  messenger.showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        missing > 0
-                            ? 'Status gemt. Mangelsag er oprettet/opdateret.'
-                            : 'Status gemt.',
+                  // Keep the team holdings in sync with the reported count.
+                  final newHoldings = Map<String, int>.from(_team.holdings);
+                  if (reported <= 0) {
+                    newHoldings.remove(materialId);
+                  } else {
+                    newHoldings[materialId] = reported;
+                  }
+
+                  String resultMessage;
+                  try {
+                    await widget.service.updateTeam(
+                      _team.copyWith(
+                        holdings: newHoldings,
+                        updatedAt: DateTime.now(),
                       ),
-                    ),
+                    );
+                    final refreshedTeam = (await widget.service.listTeams())
+                        .firstWhere((t) => t.id == _team.id);
+                    if (!mounted) return;
+                    setState(() => _team = refreshedTeam);
+                    await _loadMaterials();
+                    resultMessage = missing > 0
+                        ? 'Status og beholdning gemt. Mangelsag er oprettet/opdateret.'
+                        : 'Status og beholdning gemt.';
+                  } catch (_) {
+                    resultMessage = missing > 0
+                        ? 'Status gemt, men beholdning kunne ikke opdateres. Mangelsag er oprettet/opdateret.'
+                        : 'Status gemt, men beholdning kunne ikke opdateres.';
+                  }
+
+                  messenger.showSnackBar(
+                    SnackBar(content: Text(resultMessage)),
                   );
                   dialogNavigator.pop();
                 } catch (e) {
@@ -1942,6 +2036,7 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
     if (currentHeld <= 0) return;
 
     final qtyCtrl = TextEditingController(text: currentHeld.toString());
+    final expectedCtrl = TextEditingController();
     final fromMaterial = _materialForId(fromMaterialId);
     final fromLabel = _materialLabel(fromMaterial);
 
@@ -2045,7 +2140,18 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                         child: Text('$label (${m.totalInStock})'),
                       );
                     }).toList(),
-                    onChanged: (v) => setStateDialog(() => selected = v),
+                    onChanged: (v) => setStateDialog(() {
+                      selected = v;
+                      if (v == null) {
+                        expectedCtrl.clear();
+                        return;
+                      }
+                      final existingExpected = _team.expectedHoldings[v.id];
+                      expectedCtrl.text =
+                          (existingExpected ??
+                                  (int.tryParse(qtyCtrl.text) ?? 0))
+                              .toString();
+                    }),
                   ),
                   TextField(
                     controller: qtyCtrl,
@@ -2054,6 +2160,15 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                       labelText: 'Nyt antal på holdet (ny vare)',
                       helperText:
                           'Eksisterende vare ($fromLabel) fjernes helt fra holdet.',
+                    ),
+                  ),
+                  TextField(
+                    controller: expectedCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Forventet beholdning (ny vare)',
+                      helperText:
+                          'Valgfri. Tom = behold nuværende forventet for den nye vare.',
                     ),
                   ),
                 ],
@@ -2070,6 +2185,12 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                 if (selectedCategory == null || selected == null) return;
                 final qty = int.tryParse(qtyCtrl.text.trim()) ?? 0;
                 if (qty <= 0) return;
+                final expectedText = expectedCtrl.text.trim();
+                final expected = expectedText.isEmpty
+                    ? null
+                    : int.tryParse(expectedText);
+                if (expected != null && expected < 0) return;
+                if (expectedText.isNotEmpty && expected == null) return;
 
                 try {
                   // Replace means old item should disappear from the team.
@@ -2090,8 +2211,24 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                         'Skift vare: fjern $fromLabel ($currentHeld) og tilføj ${_materialLabel(selected!)} ($qty)',
                   );
 
-                  final updatedTeam = (await widget.service.listTeams())
+                  var updatedTeam = (await widget.service.listTeams())
                       .firstWhere((t) => t.id == _team.id);
+
+                  if (expected != null) {
+                    final newExpected = Map<String, int>.from(
+                      updatedTeam.expectedHoldings,
+                    )..[selected!.id] = expected;
+
+                    await widget.service.updateTeam(
+                      updatedTeam.copyWith(
+                        expectedHoldings: newExpected,
+                        updatedAt: DateTime.now(),
+                      ),
+                    );
+                    updatedTeam = (await widget.service.listTeams()).firstWhere(
+                      (t) => t.id == _team.id,
+                    );
+                  }
 
                   if (!mounted) return;
                   setState(() => _team = updatedTeam);

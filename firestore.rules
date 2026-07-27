@@ -38,6 +38,35 @@ service cloud.firestore {
       return isAdmin() || isMaterialManager();
     }
 
+    function isCoachRole() {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        (
+          currentUserData().role == 'coach' ||
+          currentUserData().role == 'traener' ||
+          currentUserData().role == 'træner'
+        );
+    }
+
+    function isAssignedToTeam(teamId) {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        (
+          (currentUserData().teamId is string && currentUserData().teamId == teamId) ||
+          (currentUserData().teams is list && teamId in currentUserData().teams) ||
+          resource.data.coachId == request.auth.uid
+        );
+    }
+
+    function canCoachUpdateTeamHoldings(teamId) {
+      return isCoachRole() &&
+        isAssignedToTeam(teamId) &&
+        request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          'holdings',
+          'updatedAt'
+        ]);
+    }
+
     match /users/{userId} {
       allow read: if signedIn() && (isAdmin() || request.auth.uid == userId);
       allow create: if signedIn() && request.auth.uid == userId;
@@ -46,7 +75,8 @@ service cloud.firestore {
 
     match /teams/{teamId} {
       allow read: if signedIn();
-      allow create, update, delete: if canManageTeamMaterials();
+      allow create, delete: if canManageTeamMaterials();
+      allow update: if canManageTeamMaterials() || canCoachUpdateTeamHoldings(teamId);
     }
 
     match /materials/{materialId} {
