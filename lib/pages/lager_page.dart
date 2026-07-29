@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../models/material_model.dart';
@@ -17,8 +18,10 @@ class LagerPage extends StatefulWidget {
 
 class _LagerPageState extends State<LagerPage> {
   late final InventoryService _service;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   List<MaterialModel> _materials = [];
   List<TeamModel> _teams = [];
+  Map<String, int> _medicalBagTemplate = {};
   String _searchQuery = '';
   String _selectedCategory = 'Alle';
   final Set<String> _expandedCategories = <String>{};
@@ -33,13 +36,49 @@ class _LagerPageState extends State<LagerPage> {
   Future<void> _loadInventoryData() async {
     final materialsFuture = _service.listMaterials();
     final teamsFuture = _service.listTeams();
+    final templateFuture = _loadMedicalBagTemplate();
     final list = await materialsFuture;
     final teams = await teamsFuture;
+    final template = await templateFuture;
     if (!mounted) return;
     setState(() {
       _materials = list;
       _teams = teams;
+      _medicalBagTemplate = template;
     });
+  }
+
+  bool _isMedicalBagCategory(String category) {
+    final c = category.toLowerCase();
+    return c.contains('læge') || c.contains('laege');
+  }
+
+  Future<Map<String, int>> _loadMedicalBagTemplate() async {
+    final snapshot = await _firestore
+        .collection('app_settings')
+        .doc('medical_bag_template')
+        .get();
+    final data = snapshot.data();
+    if (data == null) return const <String, int>{};
+
+    final rawItems = data['items'] as Map<String, dynamic>?;
+    if (rawItems == null || rawItems.isEmpty) return const <String, int>{};
+
+    final parsed = <String, int>{};
+    rawItems.forEach((key, value) {
+      final qty = (value as num?)?.toInt() ?? 0;
+      if (qty > 0) {
+        parsed[key] = qty;
+      }
+    });
+    return parsed;
+  }
+
+  Future<void> _saveMedicalBagTemplate(Map<String, int> items) async {
+    await _firestore.collection('app_settings').doc('medical_bag_template').set(
+      {'items': items, 'updatedAt': FieldValue.serverTimestamp()},
+      SetOptions(merge: true),
+    );
   }
 
   int _loanedCount(String materialId) {
@@ -121,7 +160,10 @@ class _LagerPageState extends State<LagerPage> {
     return categories;
   }
 
-  Widget _buildCategoryInput(TextEditingController categoryCtrl) {
+  Widget _buildCategoryInput(
+    TextEditingController categoryCtrl, {
+    VoidCallback? onChanged,
+  }) {
     final categories = _categoryOptions();
     final current = categoryCtrl.text.trim();
     final selected = current.isEmpty || !categories.contains(current)
@@ -140,6 +182,7 @@ class _LagerPageState extends State<LagerPage> {
           onChanged: (v) {
             if (v == null) return;
             categoryCtrl.text = v;
+            onChanged?.call();
           },
         ),
         TextField(
@@ -147,6 +190,7 @@ class _LagerPageState extends State<LagerPage> {
           decoration: const InputDecoration(
             labelText: 'Eller skriv ny kategori',
           ),
+          onChanged: (_) => onChanged?.call(),
         ),
       ],
     );
@@ -159,101 +203,156 @@ class _LagerPageState extends State<LagerPage> {
     final unitCtrl = TextEditingController(text: 'stk');
     final stockCtrl = TextEditingController(text: '0');
     final minCtrl = TextEditingController(text: '0');
+    final standardQtyCtrl = TextEditingController(text: '1');
 
     await showDialog(
       context: context,
       builder: (context) {
         final dialogNavigator = Navigator.of(context);
         final messenger = ScaffoldMessenger.of(context);
-        return AlertDialog(
-          title: const Text('Tilføj ny vare'),
-          content: SingleChildScrollView(
-            child: Column(
-              children: [
-                _buildCategoryInput(categoryCtrl),
-                TextField(
-                  controller: productCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Vare (f.eks. Hummel)',
-                  ),
+        var includeInMedicalStandard = false;
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            final isMedicalCategory = _isMedicalBagCategory(
+              categoryCtrl.text.trim(),
+            );
+            if (!isMedicalCategory) {
+              includeInMedicalStandard = false;
+            }
+
+            return AlertDialog(
+              title: const Text('Tilføj ny vare'),
+              content: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    _buildCategoryInput(
+                      categoryCtrl,
+                      onChanged: () => setStateDialog(() {}),
+                    ),
+                    TextField(
+                      controller: productCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Vare (f.eks. Hummel)',
+                      ),
+                    ),
+                    TextField(
+                      controller: variantCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Variant (f.eks. No 3)',
+                      ),
+                    ),
+                    TextField(
+                      controller: unitCtrl,
+                      decoration: const InputDecoration(labelText: 'Enhed'),
+                    ),
+                    TextField(
+                      controller: stockCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Start beholdning',
+                      ),
+                      keyboardType: TextInputType.number,
+                    ),
+                    TextField(
+                      controller: minCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Min. advarsel',
+                      ),
+                      keyboardType: TextInputType.number,
+                    ),
+                    if (isMedicalCategory) ...[
+                      const SizedBox(height: 8),
+                      SwitchListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Standard-vare i lægetaske'),
+                        value: includeInMedicalStandard,
+                        onChanged: (value) {
+                          setStateDialog(() {
+                            includeInMedicalStandard = value;
+                          });
+                        },
+                      ),
+                      if (includeInMedicalStandard)
+                        TextField(
+                          controller: standardQtyCtrl,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                            labelText: 'Standard antal i lægetaske',
+                          ),
+                        ),
+                    ],
+                  ],
                 ),
-                TextField(
-                  controller: variantCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Variant (f.eks. No 3)',
-                  ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => dialogNavigator.pop(),
+                  child: const Text('Annuller'),
                 ),
-                TextField(
-                  controller: unitCtrl,
-                  decoration: const InputDecoration(labelText: 'Enhed'),
-                ),
-                TextField(
-                  controller: stockCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Start beholdning',
-                  ),
-                  keyboardType: TextInputType.number,
-                ),
-                TextField(
-                  controller: minCtrl,
-                  decoration: const InputDecoration(labelText: 'Min. advarsel'),
-                  keyboardType: TextInputType.number,
+                ElevatedButton(
+                  onPressed: () async {
+                    final product = productCtrl.text.trim();
+                    final variant = variantCtrl.text.trim();
+                    if (product.isEmpty) return;
+                    final material = MaterialModel(
+                      id: DateTime.now().millisecondsSinceEpoch.toString(),
+                      name: product,
+                      variant: variant.isEmpty ? null : variant,
+                      sku: null,
+                      category: categoryCtrl.text.trim(),
+                      unit: unitCtrl.text.trim(),
+                      totalInStock: int.tryParse(stockCtrl.text) ?? 0,
+                      minThreshold: int.tryParse(minCtrl.text) ?? 0,
+                    );
+                    try {
+                      await _service
+                          .createMaterial(material)
+                          .timeout(const Duration(seconds: 8));
+
+                      if (includeInMedicalStandard) {
+                        final standardQty =
+                            int.tryParse(standardQtyCtrl.text.trim()) ?? 0;
+                        final template = Map<String, int>.from(
+                          _medicalBagTemplate,
+                        );
+                        if (standardQty > 0) {
+                          template[material.id] = standardQty;
+                        } else {
+                          template.remove(material.id);
+                        }
+                        await _saveMedicalBagTemplate(template);
+                      }
+
+                      await _loadInventoryData();
+                      if (!mounted) return;
+                      dialogNavigator.pop();
+                    } on TimeoutException catch (_) {
+                      if (mounted) {
+                        messenger.showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Tidsudløb ved oprettelse (Firestore svarer ikke)',
+                            ),
+                          ),
+                        );
+                      }
+                    } catch (e) {
+                      if (mounted) {
+                        messenger.showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Kunne ikke oprette vare: ${e.toString()}',
+                            ),
+                          ),
+                        );
+                      }
+                    }
+                  },
+                  child: const Text('Gem'),
                 ),
               ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => dialogNavigator.pop(),
-              child: const Text('Annuller'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                final product = productCtrl.text.trim();
-                final variant = variantCtrl.text.trim();
-                if (product.isEmpty) return;
-                final material = MaterialModel(
-                  id: DateTime.now().millisecondsSinceEpoch.toString(),
-                  name: product,
-                  variant: variant.isEmpty ? null : variant,
-                  sku: null,
-                  category: categoryCtrl.text.trim(),
-                  unit: unitCtrl.text.trim(),
-                  totalInStock: int.tryParse(stockCtrl.text) ?? 0,
-                  minThreshold: int.tryParse(minCtrl.text) ?? 0,
-                );
-                try {
-                  await _service
-                      .createMaterial(material)
-                      .timeout(const Duration(seconds: 8));
-                  await _loadInventoryData();
-                  if (!mounted) return;
-                  dialogNavigator.pop();
-                } on TimeoutException catch (_) {
-                  if (mounted) {
-                    messenger.showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'Tidsudløb ved oprettelse (Firestore svarer ikke)',
-                        ),
-                      ),
-                    );
-                  }
-                } catch (e) {
-                  if (mounted) {
-                    messenger.showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'Kunne ikke oprette vare: ${e.toString()}',
-                        ),
-                      ),
-                    );
-                  }
-                }
-              },
-              child: const Text('Gem'),
-            ),
-          ],
+            );
+          },
         );
       },
     );
@@ -347,108 +446,172 @@ class _LagerPageState extends State<LagerPage> {
     final minCtrl = TextEditingController(
       text: material.minThreshold.toString(),
     );
+    var includeInMedicalStandard = (_medicalBagTemplate[material.id] ?? 0) > 0;
+    final standardQtyCtrl = TextEditingController(
+      text:
+          ((_medicalBagTemplate[material.id] ?? 1) <= 0
+                  ? 1
+                  : (_medicalBagTemplate[material.id] ?? 1))
+              .toString(),
+    );
 
     await showDialog(
       context: context,
       builder: (context) {
         final dialogNavigator = Navigator.of(context);
         final messenger = ScaffoldMessenger.of(context);
-        return AlertDialog(
-          title: const Text('Redigér vare'),
-          content: SingleChildScrollView(
-            child: Column(
-              children: [
-                _buildCategoryInput(categoryCtrl),
-                TextField(
-                  controller: productCtrl,
-                  decoration: const InputDecoration(labelText: 'Vare'),
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            final isMedicalCategory = _isMedicalBagCategory(
+              categoryCtrl.text.trim(),
+            );
+            if (!isMedicalCategory) {
+              includeInMedicalStandard = false;
+            }
+
+            return AlertDialog(
+              title: const Text('Redigér vare'),
+              content: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    _buildCategoryInput(
+                      categoryCtrl,
+                      onChanged: () => setStateDialog(() {}),
+                    ),
+                    TextField(
+                      controller: productCtrl,
+                      decoration: const InputDecoration(labelText: 'Vare'),
+                    ),
+                    TextField(
+                      controller: variantCtrl,
+                      decoration: const InputDecoration(labelText: 'Variant'),
+                    ),
+                    TextField(
+                      controller: unitCtrl,
+                      decoration: const InputDecoration(labelText: 'Enhed'),
+                    ),
+                    TextField(
+                      controller: totalCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Total beholdning',
+                        helperText:
+                            'På lager beregnes automatisk ud fra udlån.',
+                      ),
+                      keyboardType: TextInputType.number,
+                    ),
+                    TextField(
+                      controller: minCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Min. advarsel',
+                      ),
+                      keyboardType: TextInputType.number,
+                    ),
+                    if (isMedicalCategory) ...[
+                      const SizedBox(height: 8),
+                      SwitchListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Standard-vare i lægetaske'),
+                        value: includeInMedicalStandard,
+                        onChanged: (value) {
+                          setStateDialog(() {
+                            includeInMedicalStandard = value;
+                          });
+                        },
+                      ),
+                      if (includeInMedicalStandard)
+                        TextField(
+                          controller: standardQtyCtrl,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                            labelText: 'Standard antal i lægetaske',
+                          ),
+                        ),
+                    ],
+                  ],
                 ),
-                TextField(
-                  controller: variantCtrl,
-                  decoration: const InputDecoration(labelText: 'Variant'),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => dialogNavigator.pop(),
+                  child: const Text('Annuller'),
                 ),
-                TextField(
-                  controller: unitCtrl,
-                  decoration: const InputDecoration(labelText: 'Enhed'),
-                ),
-                TextField(
-                  controller: totalCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Total beholdning',
-                    helperText: 'På lager beregnes automatisk ud fra udlån.',
-                  ),
-                  keyboardType: TextInputType.number,
-                ),
-                TextField(
-                  controller: minCtrl,
-                  decoration: const InputDecoration(labelText: 'Min. advarsel'),
-                  keyboardType: TextInputType.number,
+                ElevatedButton(
+                  onPressed: () async {
+                    final product = productCtrl.text.trim();
+                    if (product.isEmpty) return;
+
+                    final wantedTotal =
+                        int.tryParse(totalCtrl.text.trim()) ?? currentTotal;
+                    final recalculatedOnStock = wantedTotal - onLoan;
+
+                    final updated = material.copyWith(
+                      category: categoryCtrl.text.trim(),
+                      name: product,
+                      variant: variantCtrl.text.trim().isEmpty
+                          ? null
+                          : variantCtrl.text.trim(),
+                      unit: unitCtrl.text.trim().isEmpty
+                          ? material.unit
+                          : unitCtrl.text.trim(),
+                      totalInStock: recalculatedOnStock,
+                      minThreshold:
+                          int.tryParse(minCtrl.text.trim()) ??
+                          material.minThreshold,
+                      updatedAt: DateTime.now(),
+                    );
+
+                    try {
+                      await _service
+                          .updateMaterial(updated)
+                          .timeout(const Duration(seconds: 8));
+
+                      final template = Map<String, int>.from(
+                        _medicalBagTemplate,
+                      );
+                      if (includeInMedicalStandard && isMedicalCategory) {
+                        final standardQty =
+                            int.tryParse(standardQtyCtrl.text.trim()) ?? 0;
+                        if (standardQty > 0) {
+                          template[material.id] = standardQty;
+                        } else {
+                          template.remove(material.id);
+                        }
+                      } else {
+                        template.remove(material.id);
+                      }
+                      await _saveMedicalBagTemplate(template);
+
+                      await _loadInventoryData();
+                      if (!mounted) return;
+                      dialogNavigator.pop();
+                    } on TimeoutException catch (_) {
+                      if (mounted) {
+                        messenger.showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Tidsudløb ved opdatering (Firestore svarer ikke)',
+                            ),
+                          ),
+                        );
+                      }
+                    } catch (e) {
+                      if (mounted) {
+                        messenger.showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Kunne ikke gemme ændringer: ${e.toString()}',
+                            ),
+                          ),
+                        );
+                      }
+                    }
+                  },
+                  child: const Text('Gem'),
                 ),
               ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => dialogNavigator.pop(),
-              child: const Text('Annuller'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                final product = productCtrl.text.trim();
-                if (product.isEmpty) return;
-
-                final wantedTotal =
-                    int.tryParse(totalCtrl.text.trim()) ?? currentTotal;
-                final recalculatedOnStock = wantedTotal - onLoan;
-
-                final updated = material.copyWith(
-                  category: categoryCtrl.text.trim(),
-                  name: product,
-                  variant: variantCtrl.text.trim().isEmpty
-                      ? null
-                      : variantCtrl.text.trim(),
-                  unit: unitCtrl.text.trim().isEmpty
-                      ? material.unit
-                      : unitCtrl.text.trim(),
-                  totalInStock: recalculatedOnStock,
-                  minThreshold:
-                      int.tryParse(minCtrl.text.trim()) ??
-                      material.minThreshold,
-                  updatedAt: DateTime.now(),
-                );
-
-                try {
-                  await _service
-                      .updateMaterial(updated)
-                      .timeout(const Duration(seconds: 8));
-                  await _loadInventoryData();
-                  if (!mounted) return;
-                  dialogNavigator.pop();
-                } on TimeoutException catch (_) {
-                  if (mounted) {
-                    messenger.showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'Tidsudløb ved opdatering (Firestore svarer ikke)',
-                        ),
-                      ),
-                    );
-                  }
-                } catch (e) {
-                  if (mounted) {
-                    messenger.showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'Kunne ikke gemme ændringer: ${e.toString()}',
-                        ),
-                      ),
-                    );
-                  }
-                }
-              },
-              child: const Text('Gem'),
-            ),
-          ],
+            );
+          },
         );
       },
     );
@@ -635,10 +798,54 @@ class _LagerPageState extends State<LagerPage> {
                 final total = onStock + onLoan;
                 final isLow =
                     v.minThreshold > 0 && v.totalInStock <= v.minThreshold;
+                final isMedical = _isMedicalBagCategory(v.category);
+                final standardQty = _medicalBagTemplate[v.id] ?? 0;
                 return ListTile(
                   title: Text(displayName),
-                  subtitle: Text(
-                    '${v.unit} · Total: $total · Udlån: $onLoan · På lager: $onStock',
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: [
+                          Chip(
+                            label: Text('Total: $total'),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                          Chip(
+                            label: Text('Udlån: $onLoan'),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                          Chip(
+                            label: Text(
+                              'PÅ LAGER: $onStock ${v.unit}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            backgroundColor: onStock > 0
+                                ? Colors.green.shade100
+                                : Colors.red.shade100,
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ],
+                      ),
+                      if (isMedical)
+                        Text(
+                          standardQty > 0
+                              ? 'Lægetaske standard: Ja ($standardQty ${v.unit})'
+                              : 'Lægetaske standard: Nej',
+                          style: TextStyle(
+                            color: standardQty > 0
+                                ? Colors.green.shade700
+                                : Colors.grey.shade700,
+                            fontWeight: standardQty > 0
+                                ? FontWeight.w600
+                                : FontWeight.w400,
+                          ),
+                        ),
+                    ],
                   ),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,

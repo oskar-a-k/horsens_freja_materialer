@@ -16,6 +16,7 @@ class _HomePageState extends State<HomePage> {
   static const Set<String> _adminOverrideEmails = {
     'materialer@horsensfreja.dk',
   };
+  static const Color _logoRed = Color(0xFFD32F2F);
 
   late final Future<_UserAccess> _userAccessFuture;
 
@@ -220,185 +221,196 @@ class _HomePageState extends State<HomePage> {
               child: const Text('Log ud'),
             ),
           ),
-          FutureBuilder<_UserAccess>(
-            future: _userAccessFuture,
-            builder: (context, snapshot) {
-              if (!snapshot.hasData || snapshot.data!.isAdmin != true) {
-                return const SizedBox.shrink();
-              }
-
-              return IconButton(
-                icon: const Icon(Icons.settings),
-                tooltip: 'Indstillinger',
-                onPressed: () => Navigator.pushNamed(context, '/settings'),
-              );
-            },
-          ),
         ],
       ),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1200),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Container(
-                  height: 110,
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primary.withAlpha(25),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Image.network(
-                          'icons/logo.png',
-                          height: 62,
-                          fit: BoxFit.contain,
-                          errorBuilder: (context, error, stackTrace) => Icon(
-                            Icons.sports_soccer,
-                            size: 44,
-                            color: Theme.of(context).colorScheme.primary,
-                          ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1200),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Container(
+                      height: 360,
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).scaffoldBackgroundColor,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Image.network(
+                              'icons/logo.png',
+                              height: 310,
+                              fit: BoxFit.contain,
+                              errorBuilder: (context, error, stackTrace) =>
+                                  Icon(
+                                    Icons.sports_soccer,
+                                    size: 220,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.primary,
+                                  ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Horsens Freja Materialer',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                      ],
+                      ),
                     ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                FutureBuilder<_UserAccess>(
-                  future: _userAccessFuture,
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text('Tjekker adgang...'),
-                      );
-                    }
+                    const SizedBox(height: 16),
+                    FutureBuilder<_UserAccess>(
+                      future: _userAccessFuture,
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return const Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text('Tjekker adgang...'),
+                          );
+                        }
 
-                    if (snapshot.hasError) {
-                      return Align(
-                        alignment: Alignment.centerLeft,
-                        child: _ErrorInfoCard(
-                          label: 'Fejl ved indlæsning af adgang',
-                          message: snapshot.error.toString(),
-                        ),
-                      );
-                    }
+                        if (snapshot.hasError) {
+                          return Align(
+                            alignment: Alignment.centerLeft,
+                            child: _ErrorInfoCard(
+                              label: 'Fejl ved indlæsning af adgang',
+                              message: snapshot.error.toString(),
+                            ),
+                          );
+                        }
 
-                    if (!snapshot.hasData) {
-                      return const Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text('Ingen adgangsdata fundet.'),
-                      );
-                    }
+                        if (!snapshot.hasData) {
+                          return const Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text('Ingen adgangsdata fundet.'),
+                          );
+                        }
 
-                    final access = snapshot.data!;
-                    final roleText = 'Rolle: ${access.role}';
-                    final pageText = 'Sider: ${access.permissions.join(', ')}';
+                        final access = snapshot.data!;
+                        final roleText = 'Rolle: ${access.role}';
+                        final pageText =
+                            'Sider: ${access.permissions.join(', ')}';
 
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          roleText,
-                          style: Theme.of(context).textTheme.bodyMedium
-                              ?.copyWith(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
-                              ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          pageText,
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
-                              ),
-                        ),
-                      ],
-                    );
-                  },
-                ),
-                const SizedBox(height: 16),
-                FutureBuilder<_UserAccess>(
-                  future: _userAccessFuture,
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-
-                    if (snapshot.hasError) {
-                      return Center(
-                        child: _ErrorInfoCard(
-                          label: 'Fejl ved indlæsning af sider',
-                          message: snapshot.error.toString(),
-                        ),
-                      );
-                    }
-
-                    if (!snapshot.hasData) {
-                      return const Center(
-                        child: Text('Ingen adgangsdata fundet.'),
-                      );
-                    }
-
-                    final access = snapshot.data!;
-                    final allowedPages = _pageDefinitions
-                        .where((page) => access.permissions.contains(page.code))
-                        .toList();
-
-                    if (allowedPages.isEmpty) {
-                      return const Center(
-                        child: Text('Ingen sider er tildelt til din bruger.'),
-                      );
-                    }
-
-                    return LayoutBuilder(
-                      builder: (context, constraints) {
-                        final crossAxisCount = constraints.maxWidth >= 1000
-                            ? 4
-                            : constraints.maxWidth >= 720
-                            ? 3
-                            : 2;
-                        final childAspectRatio = constraints.maxWidth >= 1000
-                            ? 1.2
-                            : 1.0;
-
-                        return GridView.count(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          crossAxisCount: crossAxisCount,
-                          crossAxisSpacing: 16,
-                          mainAxisSpacing: 16,
-                          childAspectRatio: childAspectRatio,
-                          children: allowedPages
-                              .map(
-                                (page) => _NavigationCard(
-                                  title: page.title,
-                                  icon: page.icon,
-                                  routeName: page.route,
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              roleText,
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                                  ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              pageText,
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                                  ),
+                            ),
+                            if (access.isAdmin) ...[
+                              const SizedBox(height: 10),
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: OutlinedButton.icon(
+                                  onPressed: () =>
+                                      Navigator.pushNamed(context, '/settings'),
+                                  icon: const Icon(
+                                    Icons.settings,
+                                    color: _logoRed,
+                                  ),
+                                  label: const Text('Indstillinger'),
                                 ),
-                              )
-                              .toList(),
+                              ),
+                            ],
+                          ],
                         );
                       },
-                    );
-                  },
+                    ),
+                    const SizedBox(height: 16),
+                    FutureBuilder<_UserAccess>(
+                      future: _userAccessFuture,
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return const Center(
+                            child: CircularProgressIndicator(),
+                          );
+                        }
+
+                        if (snapshot.hasError) {
+                          return Center(
+                            child: _ErrorInfoCard(
+                              label: 'Fejl ved indlæsning af sider',
+                              message: snapshot.error.toString(),
+                            ),
+                          );
+                        }
+
+                        if (!snapshot.hasData) {
+                          return const Center(
+                            child: Text('Ingen adgangsdata fundet.'),
+                          );
+                        }
+
+                        final access = snapshot.data!;
+                        final allowedPages = _pageDefinitions
+                            .where(
+                              (page) => access.permissions.contains(page.code),
+                            )
+                            .toList();
+
+                        if (allowedPages.isEmpty) {
+                          return const Center(
+                            child: Text(
+                              'Ingen sider er tildelt til din bruger.',
+                            ),
+                          );
+                        }
+
+                        return LayoutBuilder(
+                          builder: (context, constraints) {
+                            final buttonWidth = constraints.maxWidth >= 1000
+                                ? 241.0
+                                : constraints.maxWidth >= 720
+                                ? 228.0
+                                : 202.0;
+
+                            return Center(
+                              child: Wrap(
+                                spacing: 10,
+                                runSpacing: 10,
+                                children: allowedPages
+                                    .map(
+                                      (page) => SizedBox(
+                                        width: buttonWidth,
+                                        height: 112,
+                                        child: _NavigationCard(
+                                          title: page.title,
+                                          icon: page.icon,
+                                          routeName: page.route,
+                                        ),
+                                      ),
+                                    )
+                                    .toList(),
+                              ),
+                            );
+                          },
+                        );
+                      },
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         ),
@@ -408,6 +420,7 @@ class _HomePageState extends State<HomePage> {
 }
 
 class _NavigationCard extends StatelessWidget {
+  static const Color _logoRed = Color(0xFFD32F2F);
   final String title;
   final IconData icon;
   final String routeName;
@@ -421,21 +434,17 @@ class _NavigationCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      elevation: 2,
+      elevation: 0,
       child: InkWell(
         onTap: () => Navigator.pushNamed(context, routeName),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                icon,
-                size: 48,
-                color: Theme.of(context).colorScheme.primary,
-              ),
-              const SizedBox(height: 16),
-              Text(title, style: Theme.of(context).textTheme.titleMedium),
+              Icon(icon, size: 42, color: _logoRed),
+              const SizedBox(height: 2),
+              Text(title, style: Theme.of(context).textTheme.bodyMedium),
             ],
           ),
         ),

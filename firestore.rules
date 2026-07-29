@@ -101,6 +101,11 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+    match /app_settings/{docId} {
+      allow read: if signedIn();
+      allow create, update, delete: if canManageTeamMaterials();
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

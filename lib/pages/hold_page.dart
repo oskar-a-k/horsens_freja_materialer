@@ -52,6 +52,217 @@ class _HoldPageState extends State<HoldPage> {
     return hasOverrideAdmin || isAdmin || hasManagerRole;
   }
 
+  bool _isMedicalBagCategory(String category) {
+    final c = category.toLowerCase();
+    return c.contains('læge') || c.contains('laege');
+  }
+
+  Map<String, int> _filterMedicalTemplate(
+    Map<String, int> source,
+    Set<String> validMedicalIds,
+  ) {
+    final result = <String, int>{};
+    for (final entry in source.entries) {
+      final qty = entry.value;
+      if (qty <= 0) continue;
+      if (!validMedicalIds.contains(entry.key)) continue;
+      result[entry.key] = qty;
+    }
+    return result;
+  }
+
+  Future<Map<String, int>> _loadMedicalBagTemplateFromSettings(
+    Set<String> validMedicalIds,
+  ) async {
+    final snapshot = await FirebaseFirestore.instance
+        .collection('app_settings')
+        .doc('medical_bag_template')
+        .get();
+    final data = snapshot.data();
+    if (data == null) return const <String, int>{};
+
+    final rawItems = data['items'] as Map<String, dynamic>?;
+    if (rawItems == null || rawItems.isEmpty) return const <String, int>{};
+
+    final parsed = <String, int>{};
+    rawItems.forEach((key, value) {
+      parsed[key] = (value as num?)?.toInt() ?? 0;
+    });
+    return _filterMedicalTemplate(parsed, validMedicalIds);
+  }
+
+  Future<Map<String, int>> _resolveMedicalBagTemplateForTeam(
+    TeamModel team,
+    Set<String> validMedicalIds,
+  ) async {
+    final fromSettings = await _loadMedicalBagTemplateFromSettings(
+      validMedicalIds,
+    );
+    if (fromSettings.isNotEmpty) return fromSettings;
+
+    final allTeams = await _service.listTeams();
+    final candidates = allTeams.where(
+      (t) => t.id != team.id && t.needsMedicalBag,
+    );
+
+    for (final candidate in candidates) {
+      final fromExpected = _filterMedicalTemplate(
+        candidate.expectedHoldings,
+        validMedicalIds,
+      );
+      if (fromExpected.isNotEmpty) return fromExpected;
+    }
+
+    for (final candidate in candidates) {
+      final fromHoldings = _filterMedicalTemplate(
+        candidate.holdings,
+        validMedicalIds,
+      );
+      if (fromHoldings.isNotEmpty) return fromHoldings;
+    }
+
+    return {for (final id in validMedicalIds) id: 1};
+  }
+
+  Future<void> _syncMedicalBagProvisioning({
+    required TeamModel originalTeam,
+    required String newName,
+    required bool newNeedsMedicalBag,
+  }) async {
+    final materials = await _service.listMaterials();
+    final medicalMaterialIds = materials
+        .where((m) => _isMedicalBagCategory(m.category))
+        .map((m) => m.id)
+        .toSet();
+
+    var latestTeam = (await _service.listTeams()).firstWhere(
+      (t) => t.id == originalTeam.id,
+    );
+
+    if (!latestTeam.needsMedicalBag && newNeedsMedicalBag) {
+      final template = await _resolveMedicalBagTemplateForTeam(
+        latestTeam,
+        medicalMaterialIds,
+      );
+
+      for (final entry in template.entries) {
+        if (entry.value <= 0) continue;
+        await _service.assignToTeam(
+          entry.key,
+          latestTeam.id,
+          entry.value,
+          'local',
+          note: 'Lægetaske aktiveret på hold',
+        );
+      }
+
+      latestTeam = (await _service.listTeams()).firstWhere(
+        (t) => t.id == originalTeam.id,
+      );
+
+      final expected = Map<String, int>.from(latestTeam.expectedHoldings);
+      for (final entry in template.entries) {
+        if (entry.value <= 0) continue;
+        expected[entry.key] = (expected[entry.key] ?? 0) + entry.value;
+      }
+
+      await _service.updateTeam(
+        latestTeam.copyWith(
+          expectedHoldings: expected,
+          updatedAt: DateTime.now(),
+        ),
+      );
+
+      latestTeam = (await _service.listTeams()).firstWhere(
+        (t) => t.id == originalTeam.id,
+      );
+    }
+
+    if (latestTeam.needsMedicalBag && !newNeedsMedicalBag) {
+      for (final materialId in medicalMaterialIds) {
+        final held = latestTeam.holdings[materialId] ?? 0;
+        if (held <= 0) continue;
+        await _service.returnFromTeam(
+          materialId,
+          latestTeam.id,
+          held,
+          'local',
+          note: 'Lægetaske fjernet fra hold',
+        );
+      }
+
+      latestTeam = (await _service.listTeams()).firstWhere(
+        (t) => t.id == originalTeam.id,
+      );
+
+      final expected = Map<String, int>.from(latestTeam.expectedHoldings)
+        ..removeWhere(
+          (materialId, _) => medicalMaterialIds.contains(materialId),
+        );
+
+      await _service.updateTeam(
+        latestTeam.copyWith(
+          expectedHoldings: expected,
+          updatedAt: DateTime.now(),
+        ),
+      );
+
+      latestTeam = (await _service.listTeams()).firstWhere(
+        (t) => t.id == originalTeam.id,
+      );
+    }
+
+    await _service.updateTeam(
+      latestTeam.copyWith(
+        name: newName,
+        needsMedicalBag: newNeedsMedicalBag,
+        updatedAt: DateTime.now(),
+      ),
+    );
+  }
+
+  Future<void> _provisionMedicalBagForNewTeam(TeamModel team) async {
+    final materials = await _service.listMaterials();
+    final medicalMaterialIds = materials
+        .where((m) => _isMedicalBagCategory(m.category))
+        .map((m) => m.id)
+        .toSet();
+    if (medicalMaterialIds.isEmpty) return;
+
+    final template = await _resolveMedicalBagTemplateForTeam(
+      team,
+      medicalMaterialIds,
+    );
+    if (template.isEmpty) return;
+
+    for (final entry in template.entries) {
+      if (entry.value <= 0) continue;
+      await _service.assignToTeam(
+        entry.key,
+        team.id,
+        entry.value,
+        'local',
+        note: 'Lægetaske tildelt ved oprettelse af hold',
+      );
+    }
+
+    final updatedTeam = (await _service.listTeams()).firstWhere(
+      (t) => t.id == team.id,
+    );
+    final expected = Map<String, int>.from(updatedTeam.expectedHoldings);
+    for (final entry in template.entries) {
+      if (entry.value <= 0) continue;
+      expected[entry.key] = (expected[entry.key] ?? 0) + entry.value;
+    }
+
+    await _service.updateTeam(
+      updatedTeam.copyWith(
+        expectedHoldings: expected,
+        updatedAt: DateTime.now(),
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -193,6 +404,11 @@ class _HoldPageState extends State<HoldPage> {
                             await _service
                                 .createTeam(team)
                                 .timeout(const Duration(seconds: 8));
+
+                            if (needsMedicalBag) {
+                              await _provisionMedicalBagForNewTeam(team);
+                            }
+
                             await _loadAll();
                             if (!mounted) return;
                             dialogNavigator.pop();
@@ -243,6 +459,7 @@ class _HoldPageState extends State<HoldPage> {
       builder: (context) {
         var needsMedicalBag = team.needsMedicalBag;
         final dialogNavigator = Navigator.of(context);
+        final messenger = ScaffoldMessenger.of(context);
         return StatefulBuilder(
           builder: (context, setStateDialog) {
             return AlertDialog(
@@ -274,15 +491,25 @@ class _HoldPageState extends State<HoldPage> {
                   onPressed: () async {
                     final name = nameCtrl.text.trim();
                     if (name.isEmpty) return;
-                    await _service.updateTeam(
-                      team.copyWith(
-                        name: name,
-                        needsMedicalBag: needsMedicalBag,
-                      ),
-                    );
-                    await _loadAll();
-                    if (!mounted) return;
-                    dialogNavigator.pop();
+                    try {
+                      await _syncMedicalBagProvisioning(
+                        originalTeam: team,
+                        newName: name,
+                        newNeedsMedicalBag: needsMedicalBag,
+                      );
+                      await _loadAll();
+                      if (!mounted) return;
+                      dialogNavigator.pop();
+                    } catch (e) {
+                      if (!mounted) return;
+                      messenger.showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Kunne ikke gemme hold: ${e.toString()}',
+                          ),
+                        ),
+                      );
+                    }
                   },
                   child: const Text('Gem'),
                 ),
@@ -479,6 +706,239 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
     return (material.variant == null || material.variant!.isEmpty)
         ? material.name
         : '${material.name} · ${material.variant}';
+  }
+
+  DateTime? _reportDateValue(dynamic value) {
+    if (value is Timestamp) return value.toDate();
+    if (value is String) return DateTime.tryParse(value);
+    return null;
+  }
+
+  Future<void> _showTeamLossReport() async {
+    if (!widget.canManageTeamMaterials) return;
+
+    final now = DateTime.now();
+    final pickedRange = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(now.year - 5),
+      lastDate: DateTime(now.year + 1),
+      initialDateRange: DateTimeRange(
+        start: now.subtract(const Duration(days: 30)),
+        end: now,
+      ),
+      helpText: 'Vælg rapportperiode',
+    );
+    if (pickedRange == null) return;
+
+    final start = DateTime(
+      pickedRange.start.year,
+      pickedRange.start.month,
+      pickedRange.start.day,
+    );
+    final end = DateTime(
+      pickedRange.end.year,
+      pickedRange.end.month,
+      pickedRange.end.day,
+      23,
+      59,
+      59,
+      999,
+    );
+
+    try {
+      final snapshot = await _firestore
+          .collection('bag_shortages')
+          .where('teamId', isEqualTo: _team.id)
+          .get();
+
+      final byMaterial = <String, Map<String, dynamic>>{};
+      var totalLost = 0;
+      var totalReplaced = 0;
+      var totalSelfRefilled = 0;
+      var totalDelivered = 0;
+
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        final materialId = data['materialId'] as String? ?? '';
+        if (materialId.isEmpty) continue;
+
+        final materialName = data['materialName'] as String? ?? 'Ukendt vare';
+        final quantity =
+            (data['reportedQuantity'] as num?)?.toInt() ??
+            (data['quantity'] as num?)?.toInt() ??
+            0;
+        final createdAt = _reportDateValue(data['createdAt']);
+        final resolvedAt = _reportDateValue(data['resolvedAt']);
+        final resolutionType = data['resolutionType'] as String? ?? '';
+
+        final materialStats = byMaterial.putIfAbsent(materialId, () {
+          return {
+            'materialName': materialName,
+            'lost': 0,
+            'replaced': 0,
+            'selfRefilled': 0,
+            'delivered': 0,
+          };
+        });
+
+        final createdInRange =
+            createdAt != null &&
+            !createdAt.isBefore(start) &&
+            !createdAt.isAfter(end);
+        if (createdInRange && quantity > 0) {
+          materialStats['lost'] = (materialStats['lost'] as int) + quantity;
+          totalLost += quantity;
+        }
+
+        final resolvedInRange =
+            resolvedAt != null &&
+            !resolvedAt.isBefore(start) &&
+            !resolvedAt.isAfter(end);
+        if (!resolvedInRange || quantity <= 0) continue;
+
+        if (resolutionType == 'self_refilled' ||
+            resolutionType == 'delivered') {
+          materialStats['replaced'] =
+              (materialStats['replaced'] as int) + quantity;
+          totalReplaced += quantity;
+        }
+        if (resolutionType == 'self_refilled') {
+          materialStats['selfRefilled'] =
+              (materialStats['selfRefilled'] as int) + quantity;
+          totalSelfRefilled += quantity;
+        }
+        if (resolutionType == 'delivered') {
+          materialStats['delivered'] =
+              (materialStats['delivered'] as int) + quantity;
+          totalDelivered += quantity;
+        }
+      }
+
+      final rows =
+          byMaterial.entries.where((entry) {
+            final stats = entry.value;
+            return (stats['lost'] as int) > 0 || (stats['replaced'] as int) > 0;
+          }).toList()..sort((a, b) {
+            final aName = (a.value['materialName'] as String).toLowerCase();
+            final bName = (b.value['materialName'] as String).toLowerCase();
+            return aName.compareTo(bName);
+          });
+
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (context) {
+          final dialogNavigator = Navigator.of(context);
+          return AlertDialog(
+            title: Text('Rapport: ${_team.name}'),
+            content: SizedBox(
+              width: 560,
+              child: rows.isEmpty
+                  ? const Text(
+                      'Ingen registrerede mangler eller erstatninger i perioden.',
+                    )
+                  : Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Periode: ${pickedRange.start.day}/${pickedRange.start.month}/${pickedRange.start.year} - ${pickedRange.end.day}/${pickedRange.end.month}/${pickedRange.end.year}',
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            Chip(label: Text('Manglet/tabt: $totalLost')),
+                            Chip(
+                              label: Text('Erstattet i alt: $totalReplaced'),
+                            ),
+                            Chip(
+                              label: Text('Fyldt på selv: $totalSelfRefilled'),
+                            ),
+                            Chip(label: Text('Udleveret: $totalDelivered')),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'Opdeling pr. item',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 8),
+                        Flexible(
+                          child: ListView.separated(
+                            shrinkWrap: true,
+                            itemCount: rows.length,
+                            separatorBuilder: (_, _) =>
+                                const Divider(height: 1),
+                            itemBuilder: (context, index) {
+                              final stats = rows[index].value;
+                              return Card(
+                                margin: EdgeInsets.zero,
+                                child: Padding(
+                                  padding: const EdgeInsets.all(10),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        stats['materialName'] as String,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Wrap(
+                                        spacing: 8,
+                                        runSpacing: 8,
+                                        children: [
+                                          Chip(
+                                            label: Text(
+                                              'Manglet/tabt: ${stats['lost']}',
+                                            ),
+                                          ),
+                                          Chip(
+                                            label: Text(
+                                              'Erstattet: ${stats['replaced']}',
+                                            ),
+                                          ),
+                                          Chip(
+                                            label: Text(
+                                              'Fyldt på selv: ${stats['selfRefilled']}',
+                                            ),
+                                          ),
+                                          Chip(
+                                            label: Text(
+                                              'Udleveret: ${stats['delivered']}',
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => dialogNavigator.pop(),
+                child: const Text('Luk'),
+              ),
+            ],
+          );
+        },
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Kunne ikke hente rapport: $e')));
+    }
   }
 
   bool _materialExists(String materialId) {
@@ -2275,7 +2735,17 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
     });
 
     return Scaffold(
-      appBar: AppBar(title: Text('Hold: ${_team.name}')),
+      appBar: AppBar(
+        title: Text('Hold: ${_team.name}'),
+        actions: [
+          if (widget.canManageTeamMaterials)
+            IconButton(
+              icon: const Icon(Icons.insights_outlined),
+              tooltip: 'Rapport for perioden',
+              onPressed: _showTeamLossReport,
+            ),
+        ],
+      ),
       floatingActionButton: widget.canManageTeamMaterials
           ? FloatingActionButton(
               onPressed: _assignMaterial,
