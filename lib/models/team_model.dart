@@ -123,6 +123,7 @@ class TeamKitSetModel {
 class TeamModel {
   final String id;
   final String name;
+  final int sortOrder;
   final bool needsMedicalBag;
   final String? coachId;
   final String? note;
@@ -135,6 +136,7 @@ class TeamModel {
   TeamModel({
     required this.id,
     required this.name,
+    this.sortOrder = 0,
     this.needsMedicalBag = false,
     this.coachId,
     this.note,
@@ -150,6 +152,7 @@ class TeamModel {
   TeamModel copyWith({
     String? id,
     String? name,
+    int? sortOrder,
     bool? needsMedicalBag,
     String? coachId,
     String? note,
@@ -162,6 +165,7 @@ class TeamModel {
     return TeamModel(
       id: id ?? this.id,
       name: name ?? this.name,
+      sortOrder: sortOrder ?? this.sortOrder,
       needsMedicalBag: needsMedicalBag ?? this.needsMedicalBag,
       coachId: coachId ?? this.coachId,
       note: note ?? this.note,
@@ -205,6 +209,7 @@ class TeamModel {
     return TeamModel(
       id: id,
       name: map['name'] as String? ?? '',
+      sortOrder: (map['sortOrder'] as num?)?.toInt() ?? 0,
       needsMedicalBag: map['needsMedicalBag'] as bool? ?? false,
       coachId: map['coachId'] as String?,
       note: map['note'] as String?,
@@ -223,6 +228,7 @@ class TeamModel {
   Map<String, dynamic> toMap() {
     return {
       'name': name,
+      'sortOrder': sortOrder,
       'needsMedicalBag': needsMedicalBag,
       'coachId': coachId,
       'note': note,
@@ -233,6 +239,18 @@ class TeamModel {
       'updatedAt': updatedAt?.toIso8601String(),
     };
   }
+}
+
+List<TeamModel> sortTeamsForDisplay(Iterable<TeamModel> teams) {
+  final sorted = teams.toList()
+    ..sort((a, b) {
+      final byOrder = a.sortOrder.compareTo(b.sortOrder);
+      if (byOrder != 0) return byOrder;
+      final byName = a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      if (byName != 0) return byName;
+      return a.id.compareTo(b.id);
+    });
+  return sorted;
 }
 
 Iterable<String> teamMaterialIds(TeamModel team) {

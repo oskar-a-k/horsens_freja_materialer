@@ -34,6 +34,7 @@ class _HoldPageState extends State<HoldPage> {
   List<TeamModel> _teams = [];
   String _teamSearch = '';
   bool _canManageTeamMaterials = false;
+  bool _isEditingOrder = false;
 
   bool _canManageFromUserData(
     Map<String, dynamic>? userData, {
@@ -278,7 +279,7 @@ class _HoldPageState extends State<HoldPage> {
       if (!mounted) return;
       setState(() {
         _canManageTeamMaterials = false;
-        _teams = teams;
+        _teams = sortTeamsForDisplay(teams);
       });
       return;
     }
@@ -340,15 +341,30 @@ class _HoldPageState extends State<HoldPage> {
       if (!mounted) return;
       setState(() {
         _canManageTeamMaterials = canManage;
-        _teams = visibleTeams;
+        _teams = sortTeamsForDisplay(visibleTeams);
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _canManageTeamMaterials = hasOverrideAdmin;
-        _teams = hasOverrideAdmin ? teams : <TeamModel>[];
+        _teams = hasOverrideAdmin ? sortTeamsForDisplay(teams) : <TeamModel>[];
       });
     }
+  }
+
+  Future<void> _persistTeamOrder(List<TeamModel> orderedTeams) async {
+    final updates = <Future<void>>[];
+    for (var index = 0; index < orderedTeams.length; index++) {
+      final team = orderedTeams[index];
+      updates.add(
+        _service.updateTeam(
+          team.copyWith(sortOrder: index, updatedAt: DateTime.now()),
+        ),
+      );
+    }
+    if (updates.isEmpty) return;
+    await Future.wait(updates);
+    await _loadAll();
   }
 
   Future<void> _addTeam() async {
@@ -399,6 +415,7 @@ class _HoldPageState extends State<HoldPage> {
                               id: DateTime.now().millisecondsSinceEpoch
                                   .toString(),
                               name: name,
+                              sortOrder: _teams.length,
                               needsMedicalBag: needsMedicalBag,
                             );
                             await _service
@@ -562,13 +579,36 @@ class _HoldPageState extends State<HoldPage> {
 
   @override
   Widget build(BuildContext context) {
+    final filteredTeams = sortTeamsForDisplay(
+      _teams.where((t) => t.name.toLowerCase().contains(_teamSearch)),
+    );
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Hold')),
+      appBar: AppBar(
+        title: const Text('Hold'),
+        actions: _canManageTeamMaterials
+            ? [
+                IconButton(
+                  tooltip: _isEditingOrder
+                      ? 'Afslut redigering'
+                      : 'Rediger rækkefølge',
+                  onPressed: () {
+                    setState(() {
+                      _isEditingOrder = !_isEditingOrder;
+                    });
+                  },
+                  icon: Icon(_isEditingOrder ? Icons.done : Icons.reorder),
+                ),
+              ]
+            : null,
+      ),
       floatingActionButton: _canManageTeamMaterials
-          ? FloatingActionButton(
-              onPressed: _addTeam,
-              child: const Icon(Icons.add),
-            )
+          ? (_isEditingOrder
+                ? null
+                : FloatingActionButton(
+                    onPressed: _addTeam,
+                    child: const Icon(Icons.add),
+                  ))
           : null,
       body: Column(
         children: [
@@ -588,56 +628,144 @@ class _HoldPageState extends State<HoldPage> {
                 ? const Center(
                     child: Text('Intet hold endnu. Tryk + for at tilføje.'),
                   )
-                : ListView.builder(
-                    padding: EdgeInsets.only(
-                      bottom: MediaQuery.of(context).padding.bottom + 88,
-                    ),
-                    itemCount: _teams
-                        .where(
-                          (t) => t.name.toLowerCase().contains(_teamSearch),
-                        )
-                        .length,
-                    itemBuilder: (context, index) {
-                      final filtered = _teams
-                          .where(
-                            (t) => t.name.toLowerCase().contains(_teamSearch),
-                          )
-                          .toList();
-                      final team = filtered[index];
-                      return Card(
-                        margin: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
-                        ),
-                        child: ListTile(
-                          title: Text(team.name),
-                          subtitle: Text(
-                            '${team.holdings.length} forskellige materialer · '
-                            '${team.needsMedicalBag ? 'Lægetaske: ja' : 'Lægetaske: nej'}',
-                          ),
-                          onTap: () => _openTeamDetail(team),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (_canManageTeamMaterials)
-                                IconButton(
-                                  icon: const Icon(Icons.edit),
-                                  onPressed: () => _editTeam(team),
+                : (_canManageTeamMaterials
+                      ? (_isEditingOrder
+                            ? ReorderableListView.builder(
+                                padding: EdgeInsets.only(
+                                  bottom:
+                                      MediaQuery.of(context).padding.bottom +
+                                      88,
                                 ),
-                              if (_canManageTeamMaterials)
-                                IconButton(
-                                  icon: const Icon(
-                                    Icons.delete,
-                                    color: Colors.red,
-                                  ),
-                                  onPressed: () => _deleteTeam(team),
+                                itemCount: filteredTeams.length,
+                                onReorder: (oldIndex, newIndex) async {
+                                  if (oldIndex < newIndex) {
+                                    newIndex -= 1;
+                                  }
+                                  final updatedOrder = List<TeamModel>.from(
+                                    _teams,
+                                  );
+                                  final movedTeam = filteredTeams[oldIndex];
+                                  final sourceIndex = updatedOrder.indexOf(
+                                    movedTeam,
+                                  );
+                                  if (sourceIndex < 0) return;
+                                  final reorderedTeam = updatedOrder.removeAt(
+                                    sourceIndex,
+                                  );
+                                  final targetIndex =
+                                      newIndex < updatedOrder.length
+                                      ? newIndex
+                                      : updatedOrder.length;
+                                  updatedOrder.insert(
+                                    targetIndex,
+                                    reorderedTeam,
+                                  );
+
+                                  final reorderedWithPositions = <TeamModel>[];
+                                  for (
+                                    var index = 0;
+                                    index < updatedOrder.length;
+                                    index++
+                                  ) {
+                                    reorderedWithPositions.add(
+                                      updatedOrder[index].copyWith(
+                                        sortOrder: index,
+                                      ),
+                                    );
+                                  }
+
+                                  setState(() {
+                                    _teams = reorderedWithPositions;
+                                  });
+                                  await _persistTeamOrder(_teams);
+                                },
+                                itemBuilder: (context, index) {
+                                  final team = filteredTeams[index];
+                                  return Card(
+                                    key: ValueKey(team.id),
+                                    margin: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 8,
+                                    ),
+                                    child: ListTile(
+                                      leading: ReorderableDragStartListener(
+                                        index: index,
+                                        child: const Icon(Icons.drag_handle),
+                                      ),
+                                      title: Text(team.name),
+                                      subtitle: Text(
+                                        '${team.holdings.length} forskellige materialer · '
+                                        '${team.needsMedicalBag ? 'Lægetaske: ja' : 'Lægetaske: nej'}',
+                                      ),
+                                      onTap: null,
+                                    ),
+                                  );
+                                },
+                              )
+                            : ListView.builder(
+                                padding: EdgeInsets.only(
+                                  bottom:
+                                      MediaQuery.of(context).padding.bottom +
+                                      88,
                                 ),
-                            ],
+                                itemCount: filteredTeams.length,
+                                itemBuilder: (context, index) {
+                                  final team = filteredTeams[index];
+                                  return Card(
+                                    margin: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 8,
+                                    ),
+                                    child: ListTile(
+                                      title: Text(team.name),
+                                      subtitle: Text(
+                                        '${team.holdings.length} forskellige materialer · '
+                                        '${team.needsMedicalBag ? 'Lægetaske: ja' : 'Lægetaske: nej'}',
+                                      ),
+                                      onTap: () => _openTeamDetail(team),
+                                      trailing: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          IconButton(
+                                            icon: const Icon(Icons.edit),
+                                            onPressed: () => _editTeam(team),
+                                          ),
+                                          IconButton(
+                                            icon: const Icon(
+                                              Icons.delete,
+                                              color: Colors.red,
+                                            ),
+                                            onPressed: () => _deleteTeam(team),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ))
+                      : ListView.builder(
+                          padding: EdgeInsets.only(
+                            bottom: MediaQuery.of(context).padding.bottom + 88,
                           ),
-                        ),
-                      );
-                    },
-                  ),
+                          itemCount: filteredTeams.length,
+                          itemBuilder: (context, index) {
+                            final team = filteredTeams[index];
+                            return Card(
+                              margin: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 8,
+                              ),
+                              child: ListTile(
+                                title: Text(team.name),
+                                subtitle: Text(
+                                  '${team.holdings.length} forskellige materialer · '
+                                  '${team.needsMedicalBag ? 'Lægetaske: ja' : 'Lægetaske: nej'}',
+                                ),
+                                onTap: () => _openTeamDetail(team),
+                              ),
+                            );
+                          },
+                        )),
           ),
         ],
       ),
