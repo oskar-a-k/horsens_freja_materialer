@@ -67,7 +67,7 @@ class _HomePageState extends State<HomePage> {
         return const _UserAccess(
           isAdmin: true,
           role: 'admin',
-          permissions: ['hold', 'laegetasker', 'lager', 'mangelliste'],
+          permissions: ['hold', 'lager', 'mangelliste'],
         );
       }
 
@@ -138,7 +138,7 @@ class _HomePageState extends State<HomePage> {
         return const _UserAccess(
           isAdmin: true,
           role: 'admin',
-          permissions: ['hold', 'laegetasker', 'lager', 'mangelliste'],
+          permissions: ['hold', 'lager', 'mangelliste'],
         );
       }
 
@@ -187,7 +187,7 @@ class _HomePageState extends State<HomePage> {
     switch (role) {
       case 'admin':
       case 'manager':
-        return ['hold', 'laegetasker', 'lager', 'mangelliste'];
+        return ['hold', 'lager', 'mangelliste'];
       case 'coach':
         return ['hold', 'mangelliste'];
       case 'viewer':
@@ -545,12 +545,6 @@ const List<_PageDefinition> _pageDefinitions = [
     title: 'Hold',
     icon: Icons.people,
     route: '/hold',
-  ),
-  _PageDefinition(
-    code: 'laegetasker',
-    title: 'Lægetasker',
-    icon: Icons.medical_services,
-    route: '/laegetasker',
   ),
   _PageDefinition(
     code: 'lager',

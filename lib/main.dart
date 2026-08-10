@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:horsens_freja_materialer_web/firebase_options.dart';
 import 'package:horsens_freja_materialer_web/pages/home_page.dart';
 import 'package:horsens_freja_materialer_web/pages/hold_page.dart';
-import 'package:horsens_freja_materialer_web/pages/laegetasker_page.dart';
 import 'package:horsens_freja_materialer_web/pages/lager_page.dart';
 import 'package:horsens_freja_materialer_web/pages/login_page.dart';
 import 'package:horsens_freja_materialer_web/pages/mangelliste_page.dart';
@@ -62,7 +61,6 @@ class MyApp extends StatelessWidget {
       ),
       routes: {
         '/hold': (context) => HoldPage(service: inventoryService),
-        '/laegetasker': (context) => LaegetaskerPage(service: inventoryService),
         '/lager': (context) => LagerPage(service: inventoryService),
         '/mangelliste': (context) => const MangellistePage(),
         '/settings': (context) => const SettingsPage(),

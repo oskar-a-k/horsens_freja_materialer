@@ -26,8 +26,8 @@ class _SettingsPageState extends State<SettingsPage> {
   Set<String> _selectedPermissions = {'hold'};
 
   static const Map<String, List<String>> _permissionsByRole = {
-    'admin': ['hold', 'laegetasker', 'lager', 'mangelliste'],
-    'manager': ['hold', 'laegetasker', 'lager', 'mangelliste'],
+    'admin': ['hold', 'lager', 'mangelliste'],
+    'manager': ['hold', 'lager', 'mangelliste'],
     'coach': ['hold', 'mangelliste'],
     'viewer': ['hold'],
   };
@@ -48,7 +48,6 @@ class _SettingsPageState extends State<SettingsPage> {
 
   static const Map<String, String> _pageLabels = {
     'hold': 'Hold',
-    'laegetasker': 'Lægetasker',
     'lager': 'Lager',
     'mangelliste': 'Mangelliste',
   };
