@@ -6,7 +6,6 @@ import '../models/material_model.dart';
 import '../models/team_model.dart';
 import '../services/inventory_service.dart';
 import '../services/laegetasker_access_logic.dart';
-import '../services/shortage_case_service.dart';
 
 class LaegetaskerPage extends StatefulWidget {
   final InventoryService service;
@@ -23,9 +22,6 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
   };
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  late final ShortageCaseService _shortageCaseService = ShortageCaseService(
-    firestore: _firestore,
-  );
 
   List<TeamModel> _teams = [];
   List<MaterialModel> _materials = [];
@@ -182,88 +178,6 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
     return (material.variant == null || material.variant!.isEmpty)
         ? material.name
         : '${material.name} · ${material.variant}';
-  }
-
-  Future<void> _reportShortage({
-    required TeamModel team,
-    required MaterialModel material,
-    required int currentQty,
-  }) async {
-    final qtyCtrl = TextEditingController(text: '1');
-    final noteCtrl = TextEditingController();
-
-    await showDialog(
-      context: context,
-      builder: (context) {
-        final dialogNavigator = Navigator.of(context);
-        final messenger = ScaffoldMessenger.of(context);
-        return AlertDialog(
-          title: const Text('Meld mangel i lægetaske'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(_materialLabel(material)),
-              const SizedBox(height: 8),
-              Text('Status nu: $currentQty ${material.unit}'),
-              TextField(
-                controller: qtyCtrl,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Mangler antal'),
-              ),
-              TextField(
-                controller: noteCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Begrundelse (påkrævet)',
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => dialogNavigator.pop(),
-              child: const Text('Annuller'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                final qty = int.tryParse(qtyCtrl.text.trim()) ?? 0;
-                final reason = noteCtrl.text.trim();
-                if (qty <= 0) return;
-                if (reason.isEmpty) {
-                  messenger.showSnackBar(
-                    const SnackBar(
-                      content: Text('Skriv begrundelse for manglen.'),
-                    ),
-                  );
-                  return;
-                }
-
-                final user = FirebaseAuth.instance.currentUser;
-                await _shortageCaseService.upsertOpenCase(
-                  teamId: team.id,
-                  teamName: team.name,
-                  materialId: material.id,
-                  materialName: _materialLabel(material),
-                  reportedQuantity: qty,
-                  note: reason,
-                  source: 'coach_report',
-                  reportedByUid: user?.uid,
-                  reportedByEmail: user?.email,
-                );
-
-                if (!mounted) return;
-                messenger.showSnackBar(
-                  const SnackBar(
-                    content: Text('Sag er registreret/opdateret.'),
-                  ),
-                );
-                dialogNavigator.pop();
-              },
-              child: const Text('Gem'),
-            ),
-          ],
-        );
-      },
-    );
   }
 
   Future<void> _submitStatusReport(TeamModel team) async {
@@ -533,18 +447,11 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
                                                           ? 'Aktiv sag: Ja'
                                                           : 'Aktiv sag: Nej',
                                                     ),
+                                                    const SizedBox(height: 4),
+                                                    const Text(
+                                                      'Indberetning af beholdning sker fra hold-siden.',
+                                                    ),
                                                   ],
-                                                ),
-                                                trailing: ElevatedButton(
-                                                  onPressed: () =>
-                                                      _reportShortage(
-                                                        team: team,
-                                                        material: material,
-                                                        currentQty: actual,
-                                                      ),
-                                                  child: const Text(
-                                                    'Opret/opdater sag',
-                                                  ),
                                                 ),
                                               ),
                                             );
