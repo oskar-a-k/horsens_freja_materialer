@@ -180,66 +180,6 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
         : '${material.name} · ${material.variant}';
   }
 
-  Future<void> _submitStatusReport(TeamModel team) async {
-    final noteCtrl = TextEditingController();
-
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        final dialogNavigator = Navigator.of(context);
-        final messenger = ScaffoldMessenger.of(context);
-        return AlertDialog(
-          title: const Text('Indsend statusrapport'),
-          content: TextField(
-            controller: noteCtrl,
-            minLines: 3,
-            maxLines: 5,
-            decoration: const InputDecoration(
-              labelText: 'Status og forklaring',
-              hintText:
-                  'Skriv kort status for lægetasken, og hvorfor eventuelle varer mangler.',
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => dialogNavigator.pop(),
-              child: const Text('Annuller'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                final note = noteCtrl.text.trim();
-                if (note.isEmpty) return;
-
-                final user = FirebaseAuth.instance.currentUser;
-                await _firestore.collection('bag_status_reports').add({
-                  'teamId': team.id,
-                  'teamName': team.name,
-                  'note': note,
-                  'createdAt': FieldValue.serverTimestamp(),
-                  'reportedByUid': user?.uid,
-                  'reportedByEmail': user?.email,
-                });
-
-                if (user != null) {
-                  await _firestore.collection('users').doc(user.uid).set({
-                    'lastStatusAt': FieldValue.serverTimestamp(),
-                  }, SetOptions(merge: true));
-                }
-
-                if (!mounted) return;
-                messenger.showSnackBar(
-                  const SnackBar(content: Text('Statusrapport gemt.')),
-                );
-                dialogNavigator.pop();
-              },
-              child: const Text('Gem'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -377,16 +317,6 @@ class _LaegetaskerPageState extends State<LaegetaskerPage> {
                                             Chip(
                                               label: Text(
                                                 'Åbne mangler: ${shortageDocs.length}',
-                                              ),
-                                            ),
-                                            ElevatedButton.icon(
-                                              onPressed: () =>
-                                                  _submitStatusReport(team),
-                                              icon: const Icon(
-                                                Icons.assignment_turned_in,
-                                              ),
-                                              label: const Text(
-                                                'Indsend status',
                                               ),
                                             ),
                                           ],

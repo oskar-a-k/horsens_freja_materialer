@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import '../models/team_model.dart';
 import '../models/material_model.dart';
 import '../services/inventory_service.dart';
-import '../services/shortage_case_service.dart';
 
 class HoldPage extends StatefulWidget {
   final InventoryService service;
@@ -791,9 +790,6 @@ class TeamDetailPage extends StatefulWidget {
 
 class _TeamDetailPageState extends State<TeamDetailPage> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  late final ShortageCaseService _shortageCaseService = ShortageCaseService(
-    firestore: _firestore,
-  );
   static const List<String> _kitStatusOptions = [
     'ok',
     'mangler',
@@ -1358,11 +1354,6 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
-                          ),
-                          TextButton.icon(
-                            onPressed: () => _reportMaterialStatus(entry.key),
-                            icon: const Icon(Icons.assignment_turned_in),
-                            label: const Text('Indberet beholdning'),
                           ),
                           if (widget.canManageTeamMaterials)
                             PopupMenuButton<String>(
@@ -2442,164 +2433,6 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                 }
               },
               child: const Text('Tildel'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Future<void> _reportMaterialStatus(String materialId) async {
-    final material = _materialForId(materialId);
-    final materialLabel = _materialLabel(material);
-    final currentStatus = teamActualMaterialCount(_team, materialId);
-    final expected = teamExpectedMaterialCount(_team, materialId);
-    final statusCtrl = TextEditingController(text: currentStatus.toString());
-    final reasonCtrl = TextEditingController();
-
-    await showDialog(
-      context: context,
-      builder: (context) {
-        final dialogNavigator = Navigator.of(context);
-        final messenger = ScaffoldMessenger.of(context);
-
-        return AlertDialog(
-          title: const Text('Indmeld status på materiale'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(materialLabel),
-                const SizedBox(height: 8),
-                Text('Registreret status: $currentStatus ${material.unit}'),
-                Text(
-                  expected == null
-                      ? 'Forventet beholdning: ikke sat'
-                      : 'Forventet beholdning: $expected ${material.unit}',
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: statusCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Status nu (antal)',
-                  ),
-                ),
-                TextField(
-                  controller: reasonCtrl,
-                  minLines: 2,
-                  maxLines: 4,
-                  decoration: const InputDecoration(
-                    labelText: 'Begrundelse ved mangel',
-                    hintText:
-                        'Påkrævet når status er lavere end forventet beholdning.',
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => dialogNavigator.pop(),
-              child: const Text('Annuller'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                final reported = int.tryParse(statusCtrl.text.trim());
-                if (reported == null || reported < 0) return;
-
-                final missing = expected == null
-                    ? 0
-                    : (expected - reported) > 0
-                    ? (expected - reported)
-                    : 0;
-                final reason = reasonCtrl.text.trim();
-                if (missing > 0 && reason.isEmpty) {
-                  messenger.showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'Skriv begrundelse, når der er mangel på materialet.',
-                      ),
-                    ),
-                  );
-                  return;
-                }
-
-                try {
-                  final user = FirebaseAuth.instance.currentUser;
-                  await _firestore.collection('bag_status_reports').add({
-                    'teamId': _team.id,
-                    'teamName': _team.name,
-                    'materialId': materialId,
-                    'materialName': materialLabel,
-                    'reportedQuantity': reported,
-                    'registeredQuantity': currentStatus,
-                    'expectedQuantity': expected,
-                    'missingQuantity': missing,
-                    'note': reason,
-                    'source': 'hold_status',
-                    'createdAt': FieldValue.serverTimestamp(),
-                    'reportedByUid': user?.uid,
-                    'reportedByEmail': user?.email,
-                  });
-
-                  if (missing > 0) {
-                    await _shortageCaseService.upsertOpenCase(
-                      teamId: _team.id,
-                      teamName: _team.name,
-                      materialId: materialId,
-                      materialName: materialLabel,
-                      reportedQuantity: missing,
-                      note: reason,
-                      source: 'hold_status_report',
-                      reportedByUid: user?.uid,
-                      reportedByEmail: user?.email,
-                    );
-                  }
-
-                  // Keep the team holdings in sync with the reported count.
-                  final newHoldings = Map<String, int>.from(_team.holdings);
-                  if (reported <= 0) {
-                    newHoldings.remove(materialId);
-                  } else {
-                    newHoldings[materialId] = reported;
-                  }
-
-                  String resultMessage;
-                  try {
-                    await widget.service.updateTeam(
-                      _team.copyWith(
-                        holdings: newHoldings,
-                        updatedAt: DateTime.now(),
-                      ),
-                    );
-                    final refreshedTeam = (await widget.service.listTeams())
-                        .firstWhere((t) => t.id == _team.id);
-                    if (!mounted) return;
-                    setState(() => _team = refreshedTeam);
-                    await _loadMaterials();
-                    resultMessage = missing > 0
-                        ? 'Status og beholdning gemt. Mangelsag er oprettet/opdateret.'
-                        : 'Status og beholdning gemt.';
-                  } catch (_) {
-                    resultMessage = missing > 0
-                        ? 'Status gemt, men beholdning kunne ikke opdateres. Mangelsag er oprettet/opdateret.'
-                        : 'Status gemt, men beholdning kunne ikke opdateres.';
-                  }
-
-                  messenger.showSnackBar(
-                    SnackBar(content: Text(resultMessage)),
-                  );
-                  dialogNavigator.pop();
-                } catch (e) {
-                  if (!mounted) return;
-                  messenger.showSnackBar(
-                    SnackBar(content: Text('Kunne ikke gemme status: $e')),
-                  );
-                }
-              },
-              child: const Text('Gem status'),
             ),
           ],
         );
